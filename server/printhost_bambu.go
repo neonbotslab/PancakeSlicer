@@ -799,7 +799,7 @@ func (b *bambuReport) trays() []AMSTray {
 			id = 255
 		}
 		var extruder *int
-		if len(externals) > 1 {
+		if len(externals) > 1 || id == 254 || b.Device != nil && b.Device.Extruder != nil && len(b.Device.Extruder.Info) > 1 {
 			extruder = ptr(1 - (255 - id))
 		}
 		trays = append(trays, AMSTray{ID: id, AMS: id, Slot: 0, Kind: "external", Active: b.activeTray(id, 0, true), Extruder: extruder, Remaining: e.Remaining, Type: e.Type, Color: color(e.Color), FilamentID: e.Idx, Spool: spoolID(e.UUID)})

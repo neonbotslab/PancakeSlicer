@@ -17,6 +17,7 @@ import (
 )
 
 type slotTray struct {
+	Extruder   *int   `json:"extruder,omitempty"`
 	Type       string `json:"type"`
 	Colour     string `json:"colour"`
 	Name       string `json:"name"`
@@ -304,7 +305,8 @@ func bambuFilamentIDs(resources string) (map[string]string, error) {
 const sameColour = 15.0
 
 func matchTray(t AMSTray, units int, mine []libraryFilament, chosen map[string]slotChoice, spools map[string]spoolChoice, vendor *VendorPresets, machine *Preset) slotMatch {
-	m := slotMatch{Slot: slotID(t), Label: slotLabel(t, units), Tray: slotTray{Type: t.Type, Colour: t.Color, Name: t.Name, FilamentID: t.FilamentID}, Remaining: t.Remaining}
+	m := slotMatch{Slot: slotID(t), Label: slotLabel(t, units), Tray: slotTray{Extruder: t.Extruder, Type: t.Type, Colour: t.Color, Name: t.Name, FilamentID: t.FilamentID}, Remaining: t.Remaining}
+	unreported := strings.TrimSpace(t.Type) == ""
 	if t.Spool != "" {
 		spool := t.Spool
 		m.Spool = &spool
@@ -319,13 +321,20 @@ func matchTray(t AMSTray, units int, mine []libraryFilament, chosen map[string]s
 	use := func(f *libraryFilament, rule string) slotMatch {
 		key := f.key
 		m.Filament, m.Name, m.Rule, m.Colour = &key, f.name, rule, f.colour
+		if t.Kind == "external" && unreported {
+			m.Tray.Type, m.Tray.Name = f.typ, f.name
+		}
 		return m
 	}
 	if c, ok := spools[t.Spool]; ok && t.Spool != "" && byKey[c.Filament] != nil {
 		return use(byKey[c.Filament], "spool")
 	}
-	if c, ok := chosen[m.Slot]; ok && byKey[c.Filament] != nil && strings.EqualFold(c.Type, t.Type) && colourDistance(c.Colour, t.Color) < sameColour {
+	if c, ok := chosen[m.Slot]; ok && byKey[c.Filament] != nil && (t.Kind == "external" && unreported || strings.EqualFold(c.Type, t.Type) && colourDistance(c.Colour, t.Color) < sameColour) {
 		return use(byKey[c.Filament], "remembered")
+	}
+	if unreported {
+		m.Rule, m.Name = "unassigned", "Choose filament"
+		return m
 	}
 	if t.FilamentID != "" {
 		var exact []libraryFilament
@@ -408,7 +417,7 @@ func (s *Server) printerSlotsFor(key string, profiles map[string]*v4Record) (*pr
 	}
 	out := &printerSlots{Online: true, Slots: []slotMatch{}}
 	for _, t := range st.Trays {
-		if strings.TrimSpace(t.Type) == "" {
+		if strings.TrimSpace(t.Type) == "" && t.Kind != "external" {
 			continue
 		}
 		out.Slots = append(out.Slots, matchTray(t, len(units), mine, doc.Chosen[key], doc.Spools, vendor, machine))

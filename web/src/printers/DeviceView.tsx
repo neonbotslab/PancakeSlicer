@@ -11,7 +11,7 @@ import { responseError } from '../api/access';
 import { controlDevice, controlPrinter, presenceStatus, statusLine, type PrinterConnection, type PrinterStatus, type StatusTone, type Tray } from './connections';
 import { printerCapabilities, printerModel } from './capabilities';
 import { DeviceCamera } from './DeviceCamera';
-import { chooseSlot, ruleText, slotOf, usePrinterSlots, type SlotMatch } from './slots';
+import { chooseSlot, matchedTrays, ruleText, slotOf, usePrinterSlots, type SlotMatch } from './slots';
 import { trayCode } from '../multinozzle/ams';
 import { Dropdown } from '../components/Dropdown';
 import { outcomeLabel, outcomeTone } from './sendOutcome';
@@ -66,9 +66,9 @@ function Spool({ tray, trays, dual, external = false, match, choices, busy, choo
   const options = match && [...(match.filament ? [] : [{ value: '', label: match.name }]),
     ...[...choices].sort((a, b) => Number(same(b)) - Number(same(a))).map((c) => ({ value: c.key, label: c.name, search: `${c.name} ${c.type}` })),
     ...(chosen ? [{ value: AUTO, label: 'Match automatically' }] : [])];
-  return <div className="device-spool" data-active={tray.active || undefined} aria-label={`${where}, ${tray.type || 'empty'}${tray.active ? ', in use' : ''}`}>
+  return <div className="device-spool" data-active={tray.active || undefined} aria-label={`${where}, ${tray.type || (external ? 'material not set' : 'empty')}${tray.active ? ', in use' : ''}`}>
     <span className="device-spool-disc" style={{ backgroundColor: tray.type ? colour : undefined }} data-empty={!tray.type || undefined} aria-hidden="true" />
-    <span className="device-spool-text"><span className="device-spool-where">{where}{dual && tray.extruder != null && !external && ` ${tray.extruder === 0 ? 'R' : 'L'}`}{tray.active && <span className="status-text" data-tone="printing"> In use</span>}</span>
+    <span className="device-spool-text"><span className="device-spool-where">{where}{dual && tray.extruder != null && !external && ` ${tray.extruder === 0 ? 'L' : 'R'}`}{tray.active && <span className="status-text" data-tone="printing"> In use</span>}</span>
       {match && options ? <Dropdown className="combo device-spool-pick" value={match.filament ?? ''} disabled={busy} aria-label={`Filament in ${where}`} options={options}
           onValueChange={(next) => next && next !== match.filament && choose(next === AUTO ? null : next)} />
         : <span>{tray.type || 'Empty'}</span>}
@@ -154,8 +154,8 @@ function DevicePanel({ connection, model, cover, status, live }: { connection: P
   });
   const fans = bambu ? Object.entries(status?.fans ?? {}).filter(([name]) => status?.controls?.fans?.[name] && capabilities.fans.includes(name)).sort(([a], [b]) => ['part', 'auxiliary', 'chamber'].indexOf(a) - ['part', 'auxiliary', 'chamber'].indexOf(b)) : [];
   const light = bambu ? status?.light : undefined, speed = bambu ? status?.speed_mode : undefined;
-  const trays = status?.trays ?? [], units = new Map<number, Tray[]>();
   const slotMatches = usePrinterSlots(bambu ? connection.printer : undefined);
+  const trays = matchedTrays(status?.trays ?? [], slotMatches.slots?.slots), units = new Map<number, Tray[]>();
   const matchOf = (t: Tray) => slotMatches.slots?.slots.find((m) => m.slot === slotOf(t));
   const choicesKey = useStore(() => (JSON.stringify(listProfiles('filament').map((p) => ({ key: p.key, name: p.name, type: String(Array.isArray(p.config.filament_type) ? p.config.filament_type[0] : p.config.filament_type ?? '') })))));
   const choices = useMemo(() => JSON.parse(choicesKey) as { key: string; name: string; type: string }[], [choicesKey]);

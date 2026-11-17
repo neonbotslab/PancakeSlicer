@@ -7,7 +7,7 @@ export const isExternalTray = (id: number) => id === 254 || id === 255;
 export const availableTrays = (filament: SendFilament, trays: Tray[]) => trays.filter((t) => t.type && (filament.extruder === undefined || t.extruder === undefined || t.extruder === filament.extruder));
 export function trayCode(t: Tray, trays: readonly Tray[]): string {
   if (isExternalTray(t.id)) {
-    const sides = trays.filter((x) => isExternalTray(x.id)).length > 1;
+    const sides = t.extruder !== undefined || trays.filter((x) => isExternalTray(x.id)).length > 1;
     return !sides ? 'External spool' : t.extruder === 0 || (t.extruder === undefined && t.id === 254) ? 'Left external spool' : 'Right external spool';
   }
   if (t.kind === 'ams-ht') return `AMS HT ${t.ams - 127}`;
