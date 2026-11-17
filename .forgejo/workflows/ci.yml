@@ -1,0 +1,36 @@
+# Forgejo Actions CI (self-hosted runner). Adapted from upstream .github/workflows/ci.yml.
+# Runs the web (tsc + vite build) and server (go vet + test) jobs on every push/PR.
+# The native engine (C++/OrcaSlicer) build and the release/Docker pipeline are not run here:
+# they take hours and the engine is unchanged from upstream (base image). Build it on demand.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  web:
+    name: Web (tsc + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - uses: https://github.com/actions/setup-node@v6
+        with:
+          node-version: "26"
+      - run: npm ci --prefix web --no-audit --no-fund
+      - run: npm run build --prefix web
+
+  server:
+    name: Server (go vet + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - uses: https://github.com/actions/setup-go@v6
+        with:
+          go-version: "1.27.2"
+          cache: false
+      - working-directory: server
+        run: |
+          go vet -mod=vendor ./...
+          go test -mod=vendor -count=1 ./...
