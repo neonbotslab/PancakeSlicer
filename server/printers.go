@@ -635,6 +635,7 @@ type upload struct {
 	options  bambuOptions
 	resend, onCard bool
 	outcome        string
+	internalStorage *bool
 }
 
 func (u *upload) placed() string {
@@ -668,8 +669,11 @@ func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j 
 	secret, err := p.secret()
 	u.secret = secret
 	if err == nil {
-		if status, ok := m.hub.current(p.Printer); t.Start && ok && status.Online && (status.State == "printing" || status.State == "paused" || status.State == "busy") {
-			err = &connError{"busy", "the printer is " + status.State + "; wait for its current job to finish"}
+		if status, ok := m.hub.current(p.Printer); ok && status.Online {
+			u.internalStorage = status.InternalStorage
+			if t.Start && (status.State == "printing" || status.State == "paused" || status.State == "busy") {
+				err = &connError{"busy", "the printer is " + status.State + "; wait for its current job to finish"}
+			}
 		}
 	}
 	if err == nil {
@@ -747,7 +751,7 @@ func sendFailure(err error) (string, string) {
 	case stage == "busy" || strings.Contains(text, "busy") || strings.Contains(text, "in use") || strings.Contains(text, "409"):
 		return "busy", "Wait for the current print to finish, or upload only and start it later."
 	case strings.Contains(text, "sd card") || strings.Contains(text, "storage") || strings.Contains(text, "no space") || strings.Contains(text, " 452") || strings.Contains(text, " 552"):
-		return "storage", "Insert or free space on the printer's SD card, then retry."
+		return "storage", "Check the printer's internal or external storage and free space if needed, then retry."
 	case strings.Contains(text, "in time") || strings.Contains(text, "timed out") || strings.Contains(text, "stopped accepting data"):
 		return "timeout", "Check that the printer is on and on the same network, then retry."
 	default:

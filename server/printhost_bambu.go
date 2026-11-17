@@ -46,7 +46,27 @@ func sendBambu(ctx context.Context, u *upload) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := ftpsUpload(ctx, host, tlsConfig, u); err != nil {
+	md5sum := hex.EncodeToString(digest.Sum(nil))
+	internalStorage := u.internalStorage
+	if internalStorage == nil {
+		internalStorage, err = bambuInternalStorage(ctx, p, u.secret)
+		if err != nil {
+			return "", err
+		}
+	}
+	fileURL := ""
+	err = errBambuTunnelUnsupported
+	if *internalStorage {
+		fileURL, err = bambuTunnelUpload(ctx, host, tlsConfig, u, md5sum)
+	}
+	if errors.Is(err, errBambuTunnelUnsupported) {
+		fileURL = "file:///sdcard/" + u.filename
+		err = ftpsUpload(ctx, host, tlsConfig, u)
+		md5sum = strings.ToUpper(md5sum)
+	} else if err == nil {
+		md5sum = "from_sd_card"
+	}
+	if err != nil {
 		return "", err
 	}
 	u.stored()
@@ -54,7 +74,7 @@ func sendBambu(ctx context.Context, u *upload) (string, error) {
 		return u.placed() + ".", nil
 	}
 	u.starting()
-	return mqttProjectFile(ctx, p, u, plate, strings.ToUpper(hex.EncodeToString(digest.Sum(nil))))
+	return mqttProjectFile(ctx, p, u, plate, md5sum, fileURL)
 }
 
 var plateEntry = regexp.MustCompile(`^Metadata/plate_[0-9]+\.gcode$`)
@@ -390,7 +410,7 @@ func refusedForAuth(result, reason string, code int) bool {
 	return !strings.EqualFold(result, "success") && (strings.Contains(strings.ToLower(reason), "verif") || code == 84033543)
 }
 
-func mqttProjectFile(ctx context.Context, p *PrinterConfig, u *upload, plate, md5sum string) (string, error) {
+func mqttProjectFile(ctx context.Context, p *PrinterConfig, u *upload, plate, md5sum, fileURL string) (string, error) {
 	fail := func(err error) (string, error) {
 		if cause := context.Cause(ctx); cause != nil {
 			err = cause
@@ -417,7 +437,7 @@ func mqttProjectFile(ctx context.Context, p *PrinterConfig, u *upload, plate, md
 	if err := mqttPublish(conn, p, map[string]any{"print": map[string]any{
 		"sequence_id": sequence, "command": "project_file", "param": plate,
 		"project_id": "0", "profile_id": "0", "task_id": "0", "subtask_id": "0", "subtask_name": name,
-		"file": u.filename, "url": "file:///sdcard/" + u.filename, "md5": md5sum,
+		"file": u.filename, "url": fileURL, "md5": md5sum,
 		"timelapse": u.options.timelapse, "bed_type": "auto", "bed_leveling": u.options.bedLeveling, "flow_cali": u.options.flowCali,
 		"vibration_cali": u.options.vibrationCali, "layer_inspect": false, "use_ams": u.options.useAMS, "ams_mapping": legacyMapping, "ams_mapping2": addresses,
 	}}); err != nil {
@@ -667,6 +687,10 @@ func spoolID(uuid string) string {
 }
 
 type bambuReport struct {
+	Fun       *string         `json:"fun"`
+	Fun2      *string         `json:"fun2"`
+	Command   string          `json:"command"`
+	Msg       *int            `json:"msg"`
 	SpeedMode *int            `json:"spd_lvl"`
 	StartTime json.RawMessage `json:"start_time"`
 	Lights    []struct {
@@ -785,6 +809,11 @@ func (b *bambuReport) trays() []AMSTray {
 
 func (b *bambuReport) status() PrinterStatus {
 	st := PrinterStatus{Online: true, Detail: b.State, File: b.Subtask, Layer: b.Layer, Layers: b.Layers, Trays: b.trays(), Nozzles: b.nozzles(), Fans: b.fans()}
+	if b.Fun2 != nil {
+		st.InternalStorage = bambuInternalStorageFlag(*b.Fun2)
+	} else if b.Fun != nil || b.Command == "push_status" && b.Msg != nil && *b.Msg == 0 {
+		st.InternalStorage = ptr(false)
+	}
 	st.Controls = b.controls()
 	if b.Device != nil && b.Device.Extruder != nil {
 		for _, extruder := range b.Device.Extruder.Info {

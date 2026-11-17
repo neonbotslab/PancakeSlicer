@@ -19,6 +19,7 @@ type PrinterMessage struct {
 }
 
 type PrinterStatus struct {
+	InternalStorage *bool          `json:"internal_storage,omitempty"`
 	NozzleTemps []NozzleTemp       `json:"nozzle_temps,omitempty"`
 	Job         *deviceJob         `json:"job,omitempty"`
 	StartedAt   *time.Time         `json:"started_at,omitempty"`
