@@ -13,9 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -686,6 +688,69 @@ func spoolID(uuid string) string {
 	return uuid
 }
 
+func canonicalFilamentType(material, filamentID string) string {
+	if material == "" {
+		return ""
+	}
+	switch filamentID {
+	case "GFS00":
+		return "PLA-S"
+	case "GFS01":
+		return "PA-S"
+	default:
+		return material
+	}
+}
+
+func bambuExistenceMask(text *string) *uint64 {
+	if text == nil {
+		return nil
+	}
+	value := strings.TrimPrefix(strings.TrimPrefix(*text, "0x"), "0X")
+	mask, err := strconv.ParseUint(value, 16, 64)
+	if err != nil {
+		return nil
+	}
+	return &mask
+}
+
+func absentBambuSlot(mask *uint64, bit int) bool {
+	return mask != nil && bit >= 0 && bit < 64 && *mask&(uint64(1)<<bit) == 0
+}
+
+type bambuAMSLayout struct {
+	unit, firstID, unitBit, firstTrayBit, capacity int
+	kind                                           string
+	extruder                                       *int
+}
+
+func bambuAMSUnitLayout(id, info string) (bambuAMSLayout, bool) {
+	unit, err := strconv.Atoi(id)
+	if err != nil || unit < 0 || unit > 255 {
+		return bambuAMSLayout{}, false
+	}
+	layout := bambuAMSLayout{unit: unit, firstID: unit * 4, unitBit: unit, firstTrayBit: unit * 4, capacity: 4, kind: "ams"}
+	if bits, err := strconv.ParseUint(strings.TrimPrefix(info, "0x"), 16, 64); err == nil {
+		layout.kind = map[uint64]string{1: "ams", 2: "ams-lite", 3: "ams-2-pro", 4: "ams-ht", 5: "ams-lite-mixed"}[bits&15]
+		if binding := (bits >> 8) & 15; binding < 2 {
+			layout.extruder = ptr(1 - int(binding))
+		}
+	}
+	switch {
+	case layout.kind == "ams-lite-mixed":
+		layout.firstID, layout.unitBit, layout.firstTrayBit = 24, 12, 24
+	case layout.kind == "ams-ht" || unit >= 128:
+		layout.kind = "ams-ht"
+		layout.firstID, layout.unitBit, layout.firstTrayBit, layout.capacity = unit, 4+(unit-128), 16+(unit-128), 1
+	}
+	return layout, true
+}
+
+func (layout bambuAMSLayout) traySlot(id string) (int, bool) {
+	slot, err := strconv.Atoi(id)
+	return slot, err == nil && slot >= 0 && slot < layout.capacity
+}
+
 type bambuReport struct {
 	Fun       *string         `json:"fun"`
 	Fun2      *string         `json:"fun2"`
@@ -728,8 +793,10 @@ type bambuReport struct {
 	Subtask             string          `json:"subtask_name"`
 	Error               int64           `json:"print_error"`
 	AMS                 *struct {
-		TrayNow json.RawMessage `json:"tray_now"`
-		AMS     []struct {
+		TrayNow       json.RawMessage `json:"tray_now"`
+		UnitExistBits *string         `json:"ams_exist_bits"`
+		TrayExistBits *string         `json:"tray_exist_bits"`
+		AMS           []struct {
 			ID   string `json:"id"`
 			Info string `json:"info"`
 			Tray []struct {
@@ -743,12 +810,11 @@ type bambuReport struct {
 			} `json:"tray"`
 		} `json:"ams"`
 	} `json:"ams"`
-	External      *bambuExternalTray  `json:"vt_tray"`
 	ExternalSlots []bambuExternalTray `json:"vir_slot"`
 }
 
 func (b *bambuReport) trays() []AMSTray {
-	if b.AMS == nil && b.External == nil && b.ExternalSlots == nil {
+	if b.AMS == nil && b.ExternalSlots == nil {
 		return nil
 	}
 	color := func(c string) string {
@@ -759,50 +825,43 @@ func (b *bambuReport) trays() []AMSTray {
 	}
 	trays := []AMSTray{}
 	if b.AMS != nil {
+		unitMask, trayMask := bambuExistenceMask(b.AMS.UnitExistBits), bambuExistenceMask(b.AMS.TrayExistBits)
 		for _, unit := range b.AMS.AMS {
-			a, err := strconv.Atoi(unit.ID)
-			if err != nil || a < 0 || a > 255 {
+			layout, ok := bambuAMSUnitLayout(unit.ID, unit.Info)
+			if !ok || absentBambuSlot(unitMask, layout.unitBit) {
 				continue
 			}
-			info, infoErr := strconv.ParseUint(strings.TrimPrefix(unit.Info, "0x"), 16, 64)
-			kind := "ams"
-			var extruder *int
-			if infoErr == nil {
-				kind = map[uint64]string{1: "ams", 2: "ams-lite", 3: "ams-2-pro", 4: "ams-ht", 5: "ams-lite-mixed"}[info&15]
-				if binding := (info >> 8) & 15; binding < 2 {
-					extruder = ptr(1 - int(binding))
-				}
-			}
+			first := len(trays)
 			for _, t := range unit.Tray {
-				slot, err := strconv.Atoi(t.ID)
-				if err != nil || slot < 0 || slot > 3 {
+				slot, ok := layout.traySlot(t.ID)
+				if !ok {
 					continue
 				}
-				id := a*4 + slot
-				if kind == "ams-ht" || a >= 128 {
-					id = a
+				tray := AMSTray{ID: layout.firstID + slot, AMS: layout.unit, Slot: slot, Kind: layout.kind, Extruder: layout.extruder}
+				if !absentBambuSlot(trayMask, layout.firstTrayBit+slot) {
+					tray.Type = canonicalFilamentType(t.Type, t.Idx)
+					tray.Color, tray.Name = color(t.Color), t.Name
+					tray.FilamentID, tray.Spool = t.Idx, spoolID(t.UUID)
+					tray.Remaining, tray.Active = t.Remaining, b.activeTray(layout.unit, slot, false)
 				}
-				if kind == "ams-lite-mixed" {
-					id = 24 + slot
-				}
-				trays = append(trays, AMSTray{ID: id, AMS: a, Slot: slot, Kind: kind, Extruder: extruder, Remaining: t.Remaining, Active: b.activeTray(a, slot, false), Type: t.Type, Color: color(t.Color), Name: t.Name, FilamentID: t.Idx, Spool: spoolID(t.UUID)})
+				trays = append(trays, tray)
+			}
+			if len(trays) == first {
+				trays = append(trays, AMSTray{ID: layout.firstID, AMS: layout.unit, Kind: layout.kind, Extruder: layout.extruder})
 			}
 		}
 	}
-	externals := b.ExternalSlots
-	if externals == nil && b.External != nil {
-		externals = []bambuExternalTray{*b.External}
-	}
-	for _, e := range externals {
+	dual := b.dualNozzle()
+	for _, e := range b.ExternalSlots {
 		id, err := strconv.Atoi(e.ID)
 		if err != nil || !isExternalTray(id) {
-			id = 255
+			continue
 		}
 		var extruder *int
-		if len(externals) > 1 || id == 254 || b.Device != nil && b.Device.Extruder != nil && len(b.Device.Extruder.Info) > 1 {
-			extruder = ptr(1 - (255 - id))
+		if dual {
+			extruder = ptr(id - 254)
 		}
-		trays = append(trays, AMSTray{ID: id, AMS: id, Slot: 0, Kind: "external", Active: b.activeTray(id, 0, true), Extruder: extruder, Remaining: e.Remaining, Type: e.Type, Color: color(e.Color), FilamentID: e.Idx, Spool: spoolID(e.UUID)})
+		trays = append(trays, AMSTray{ID: id, AMS: id, Slot: 0, Kind: "external", Active: b.activeTray(id, 0, true), Extruder: extruder, Remaining: e.Remaining, Type: canonicalFilamentType(e.Type, e.Idx), Color: color(e.Color), FilamentID: e.Idx, Spool: spoolID(e.UUID)})
 	}
 	return trays
 }
@@ -867,16 +926,216 @@ func (b *bambuReport) status() PrinterStatus {
 
 const bambuCancelled = 0x0300400C
 
-func mergeReport(into, delta map[string]any) {
-	for k, v := range delta {
-		if dm, ok := v.(map[string]any); ok {
-			if im, ok := into[k].(map[string]any); ok {
-				mergeReport(im, dm)
+func decodeBambuReport(state map[string]any, payload []byte) *bambuReport {
+	var message struct {
+		Print map[string]any `json:"print"`
+	}
+	if json.Unmarshal(payload, &message) != nil || message.Print == nil {
+		return nil
+	}
+	candidate := maps.Clone(state)
+	mergeReport(candidate, message.Print)
+	raw, err := json.Marshal(candidate)
+	if err != nil {
+		return nil
+	}
+	var report bambuReport
+	if json.Unmarshal(raw, &report) != nil {
+		return nil
+	}
+	pruneAbsentBambuInventory(candidate)
+	clear(state)
+	maps.Copy(state, candidate)
+	return &report
+}
+
+func pruneAbsentBambuInventory(state map[string]any) {
+	ams, _ := state["ams"].(map[string]any)
+	units, _ := ams["ams"].([]any)
+	if len(units) == 0 {
+		return
+	}
+	unitBits, _ := ams["ams_exist_bits"].(string)
+	trayBits, _ := ams["tray_exist_bits"].(string)
+	unitMask, trayMask := bambuExistenceMask(&unitBits), bambuExistenceMask(&trayBits)
+	if unitMask == nil && trayMask == nil {
+		return
+	}
+	retained := make([]any, 0, len(units))
+	changed := false
+	for _, raw := range units {
+		unit, _ := raw.(map[string]any)
+		id, _ := unit["id"].(string)
+		info, _ := unit["info"].(string)
+		if layout, ok := bambuAMSUnitLayout(id, info); ok {
+			if absentBambuSlot(unitMask, layout.unitBit) {
+				changed = true
 				continue
 			}
+			if trayMask != nil {
+				if cleaned := clearAbsentBambuTrays(unit, layout, trayMask); cleaned != nil {
+					raw = cleaned
+					changed = true
+				}
+			}
 		}
-		into[k] = v
+		retained = append(retained, raw)
 	}
+	if changed {
+		ams = maps.Clone(ams)
+		ams["ams"] = retained
+		state["ams"] = ams
+	}
+}
+
+func clearAbsentBambuTrays(unit map[string]any, layout bambuAMSLayout, mask *uint64) map[string]any {
+	trays, _ := unit["tray"].([]any)
+	var cleaned []any
+	for i, raw := range trays {
+		tray, ok := raw.(map[string]any)
+		if !ok || len(tray) <= 1 {
+			continue
+		}
+		id, _ := tray["id"].(string)
+		if slot, ok := layout.traySlot(id); ok && absentBambuSlot(mask, layout.firstTrayBit+slot) {
+			if cleaned == nil {
+				cleaned = slices.Clone(trays)
+			}
+			cleaned[i] = map[string]any{"id": id}
+		}
+	}
+	if cleaned == nil {
+		return nil
+	}
+	unit = maps.Clone(unit)
+	unit["tray"] = cleaned
+	return unit
+}
+
+func mergeReport(into, delta map[string]any) {
+	msg, hasMsg := delta["msg"]
+	if delta["command"] == "push_status" && (!hasMsg || msg == float64(0)) {
+		clear(into)
+	}
+	mergeReportFields(into, normalizeExternalTray(delta), "")
+}
+
+func normalizeExternalTray(delta map[string]any) map[string]any {
+	legacy, hasLegacy := delta["vt_tray"].(map[string]any)
+	slots, hasSlots := delta["vir_slot"].([]any)
+	if !hasLegacy && len(slots) == 0 {
+		return delta
+	}
+	normalized := make([]any, 0, len(slots))
+	hasMain := false
+	for _, item := range slots {
+		if item == nil {
+			continue
+		}
+		if row, ok := item.(map[string]any); ok {
+			switch id := row["id"].(type) {
+			case nil:
+				continue
+			case string:
+				if id != "254" && id != "255" {
+					continue
+				}
+				hasMain = hasMain || id == "255"
+			}
+		}
+		normalized = append(normalized, item)
+	}
+	if hasLegacy && !hasMain && (!hasSlots || len(slots) > 0) {
+		main := maps.Clone(legacy)
+		main["id"] = "255"
+		normalized = append(normalized, main)
+	}
+	if !hasLegacy && len(normalized) == len(slots) {
+		return delta
+	}
+	delta = maps.Clone(delta)
+	delete(delta, "vt_tray")
+	if len(normalized) > 0 {
+		delta["vir_slot"] = normalized
+	} else if len(slots) > 0 {
+		delete(delta, "vir_slot")
+	}
+	return delta
+}
+
+func mergeReportFields(into, delta map[string]any, prefix string) {
+	for key, update := range delta {
+		path := prefix + key
+		switch path {
+		case "ams.ams_exist_bits", "ams.tray_exist_bits":
+			value, ok := update.(string)
+			if !ok || bambuExistenceMask(&value) == nil {
+				continue
+			}
+		case "vir_slot", "ams.ams", "ams.ams.tray", "device.extruder.info", "device.nozzle.info":
+			if rows, ok := update.([]any); ok {
+				if previous, ok := into[key].([]any); ok {
+					into[key] = mergeReportRows(previous, rows, path+".")
+					continue
+				}
+			}
+		}
+		if fields, ok := update.(map[string]any); ok {
+			previous, _ := into[key].(map[string]any)
+			merged := maps.Clone(previous)
+			if merged == nil {
+				merged = make(map[string]any, len(fields))
+			}
+			mergeReportFields(merged, fields, path+".")
+			into[key] = merged
+			continue
+		}
+		into[key] = update
+	}
+}
+
+func mergeReportRows(into, delta []any, prefix string) []any {
+	if len(delta) == 0 || len(into) == 0 {
+		return delta
+	}
+	byID := indexReportRows(into)
+	if byID == nil || indexReportRows(delta) == nil {
+		return delta
+	}
+	into = slices.Clone(into)
+	for _, item := range delta {
+		row := item.(map[string]any)
+		id := row["id"]
+		if index, ok := byID[id]; ok {
+			previous := maps.Clone(into[index].(map[string]any))
+			mergeReportFields(previous, row, prefix)
+			into[index] = previous
+		} else {
+			into = append(into, row)
+		}
+	}
+	return into
+}
+
+func indexReportRows(rows []any) map[any]int {
+	byID := make(map[any]int, len(rows))
+	for index, item := range rows {
+		row, ok := item.(map[string]any)
+		if !ok {
+			return nil
+		}
+		id := row["id"]
+		switch id.(type) {
+		case string, float64:
+		default:
+			return nil
+		}
+		if _, duplicate := byID[id]; duplicate {
+			return nil
+		}
+		byID[id] = index
+	}
+	return byID
 }
 
 func amsBambu(ctx context.Context, p *PrinterConfig, secret string) ([]AMSTray, error) {
@@ -890,18 +1149,17 @@ func amsBambu(ctx context.Context, p *PrinterConfig, secret string) ([]AMSTray, 
 		return nil, err
 	}
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	state := map[string]any{}
 	for {
 		kind, body, err := mqttRead(r)
 		if err != nil {
 			return nil, fmt.Errorf("Couldn't read AMS status from the printer: %w", err)
 		}
-		var message struct {
-			Print *bambuReport `json:"print"`
-		}
-		if json.Unmarshal(mqttPayload(kind, body), &message) != nil || message.Print == nil {
+		report := decodeBambuReport(state, mqttPayload(kind, body))
+		if report == nil {
 			continue
 		}
-		if trays := message.Print.trays(); trays != nil {
+		if trays := report.trays(); trays != nil {
 			return trays, nil
 		}
 	}
@@ -936,16 +1194,7 @@ func monitorBambu(ctx context.Context, p *PrinterConfig, secret string, publish 
 			return netError(err, "the printer (MQTT port 8883)")
 		}
 		heard = time.Now()
-		var message struct {
-			Print map[string]any `json:"print"`
-		}
-		if json.Unmarshal(mqttPayload(kind, body), &message) != nil || message.Print == nil {
-			continue
-		}
-		mergeReport(state, message.Print)
-		raw, _ := json.Marshal(state)
-		var report bambuReport
-		if json.Unmarshal(raw, &report) == nil && report.State != "" {
+		if report := decodeBambuReport(state, mqttPayload(kind, body)); report != nil && report.State != "" {
 			publish(report.status())
 		}
 	}

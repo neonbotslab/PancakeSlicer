@@ -83,15 +83,37 @@ func bambuNozzleType(code string) (string, string) {
 	return material, flow
 }
 
+func (b *bambuReport) dualNozzle() bool {
+	for _, slot := range b.ExternalSlots {
+		if slot.ID == "254" {
+			return true
+		}
+	}
+	if b.Device == nil {
+		return false
+	}
+	if b.Device.Extruder != nil && len(b.Device.Extruder.Info) > 1 {
+		return true
+	}
+	system := b.Device.Nozzle
+	if system == nil {
+		return false
+	}
+	if system.Exist&2 != 0 {
+		return true
+	}
+	for _, row := range system.Info {
+		if row.ID&0xf == 1 && row.ID&0xf0 == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *bambuReport) nozzles() []NozzleStatus {
 	if b.Device != nil && b.Device.Nozzle != nil {
 		system := b.Device.Nozzle
-		dual := system.Exist&2 != 0
-		for _, row := range system.Info {
-			if row.ID&0xf == 1 && row.ID&0xf0 == 0 {
-				dual = true
-			}
-		}
+		dual := b.dualNozzle()
 		out := []NozzleStatus{}
 		for _, row := range system.Info {
 			diameter := bambuNumber(row.Diameter)
