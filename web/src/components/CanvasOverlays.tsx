@@ -320,22 +320,28 @@ export function SliceNotification() {
         <div className="notif-title">Slicing canceled</div>
       </div>
     ),
-    ...perObject.filter((n) => !n.f && !closed.has(n.key) && !expired.has(n.key)).map(({ bare, key, r, ws }, index) => (
-      <div key={key} className={`notification ${ws.length && !r ? 'warning' : 'done'}`}>
-        {close(key)}
-        <div className="notif-title notif-sentence">{r ? `${bare}: ${r.style}` : bare}</div>
-        {r && <div className="notif-body">{r.fact}{r.curved && <><Sep/>{compareLink}</>}</div>}
-        {r?.partial && <div className="notif-body">{r.partial[0].toUpperCase() + r.partial.slice(1)}</div>}
-        <WarningLines warnings={ws} open={details.has(key)} onToggle={() => toggleDetails(key)} />
-        {offerId && index === 0 && <NotificationOffer id={offerId} />}
-      </div>
-    )),
-    (offerId && !perObject.some((n) => !n.f && !closed.has(n.key) && !expired.has(n.key)) || done && !perObject.length && !closed.has(done) && !expired.has(done)) && (
-      <div key="slice-ready" className="notification done">{close(done ?? `offer:${offerId}`)}<div className="notif-title">Slice ready</div>{offerId && <NotificationOffer id={offerId} />}</div>
-    ),
   ].filter((el): el is ReactElement => !!el);
-  useEffect(() => { if (tips.length < 2) setTipsOpen(false); }, [tips.length]);
-  return (
+  const visibleResults = perObject.filter((n) => !n.f && !closed.has(n.key) && !expired.has(n.key));
+  const sliceTips = visibleResults.map(({ bare, key, r, ws }, index) => (
+    <div key={key} className={`notification ${ws.length && !r ? 'warning' : 'done'}`}>
+      {close(key)}
+      <div className="notif-title notif-sentence">{r ? `${bare}: ${r.style}` : bare}</div>
+      {r && <div className="notif-body">{r.fact}{r.curved && <><Sep/>{compareLink}</>}</div>}
+      {r?.partial && <div className="notif-body">{r.partial[0].toUpperCase() + r.partial.slice(1)}</div>}
+      <WarningLines warnings={ws} open={details.has(key)} onToggle={() => toggleDetails(key)} />
+      {offerId && index === 0 && <NotificationOffer id={offerId} />}
+    </div>
+  ));
+  if (offerId && !visibleResults.length || done && !perObject.length && !closed.has(done) && !expired.has(done)) {
+    sliceTips.push(
+      <div key="slice-ready" className="notification done">{close(done ?? `offer:${offerId}`)}<div className="notif-title">Slice ready</div>{offerId && <NotificationOffer id={offerId} />}</div>
+    );
+  }
+  const tipCount = tips.length + sliceTips.length;
+  const collapseTips = tipCount > 1 && tier === 'phone';
+  const showTips = !collapseTips || tipsOpen;
+  useEffect(() => { if (tipCount < 2) setTipsOpen(false); }, [tipCount]);
+  return (<>
     <div className="notifications" ref={stack} onPointerEnter={() => setHeld(true)} onPointerLeave={() => setHeld(false)}>
       <InTopLayer>
         <div className="notif-group">
@@ -394,12 +400,17 @@ export function SliceNotification() {
           </div>
         </div>
       )}
-      {tips.length > 1 && tier === 'phone' && (
-        <button type="button" className="notif-chip" aria-expanded={tipsOpen} onClick={() => setTipsOpen(!tipsOpen)}>{tips.length} tips</button>
+      {collapseTips && (
+        <button type="button" className="notif-chip" aria-expanded={tipsOpen} onClick={() => setTipsOpen(!tipsOpen)}>{tipCount} tips</button>
       )}
-      {(tips.length < 2 || tier !== 'phone' || tipsOpen) && tips}
+      {showTips && tips}
     </div>
-  );
+    {showTips && sliceTips.length > 0 && (
+      <div className="slice-notifications" onPointerEnter={() => setHeld(true)} onPointerLeave={() => setHeld(false)}>
+        {sliceTips}
+      </div>
+    )}
+  </>);
 }
 
 export { Toast } from './Notices';

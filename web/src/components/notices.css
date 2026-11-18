@@ -46,8 +46,11 @@
   :where(.orca-parity) .toast, :where(.orca-parity) .notification { animation: none; }
   :where(.orca-parity) .loading-bar.indeterminate > div { animation: none; width: 100%; opacity: 0.5; }
 }
-:where(.orca-parity) .notification-offer .notif-actions { display: flex; gap: 8px; margin-top: 8px; }
-:where(.orca-parity) .notification-setting { gap: 16px; }
-:where(.orca-parity) .form-row.notification-setting > span { flex: 1 1 0; }
-:where(.orca-parity) .form-row.notification-setting > .orca-switch { flex: 0 0 32px; width: 32px; min-width: 32px; max-width: 32px; }
-:where(.orca-parity) .notification-setting-note { margin: 0; color: var(--ink-2); font: var(--t-small); }
+:where(.orca-parity) .slice-notifications { top: var(--pv-top, var(--cv-band)); inset-inline: 0; width: min(420px, calc(100% - 2 * var(--s-5))); margin-inline: auto; }
+:where(.orca-parity) .slice-notifications .notification > .notif-body.notification-offer { flex-basis: 100%; margin-top: var(--s-2); }
+:where(.orca-parity) .notification-offer > :first-child { text-wrap: balance; }
+:where(.orca-parity) .notification-offer .notif-actions { gap: var(--s-3); margin-top: var(--s-3); }
+:where(.orca-parity) .notification-setting { display: grid; gap: var(--s-2); }
+:where(.orca-parity) .notification-setting .modal-check:has(> .control-check:disabled) { color: color-mix(in srgb, var(--ink) 50%, transparent); cursor: not-allowed; }
+:where(.orca-parity) .notification-setting .modal-check > .control-check:disabled { opacity: 0.5; cursor: not-allowed; }
+:where(.orca-parity) .notification-setting-note { margin: 0; margin-inline-start: calc(16px + var(--s-3)); color: var(--muted); font: var(--t-small); }

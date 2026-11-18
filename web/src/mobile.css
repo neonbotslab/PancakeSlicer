@@ -153,7 +153,7 @@
   :where(.orca-parity) :is(.select-row, .lg-opt, .lg-switch, .opt-check, .orca-check-label, .pf-facet-choice) { min-height: 44px; }
   :where(.orca-parity) :is(.pk-star, .pk-clear, .lg-collapse, .tool-fold) { min-width: 44px; min-height: 44px; }
   :where(.orca-parity) :is(.modal-close, .pf-close) { min-width: 44px; min-height: 44px; }
-  :where(.orca-parity) .canvas-area .notifications .notif-close { min-width: 44px; min-height: 44px; width: 44px; height: 44px; top: 0; right: 0; }
+  :where(.orca-parity) .canvas-area :is(.notifications, .slice-notifications) .notif-close { min-width: 44px; min-height: 44px; width: 44px; height: 44px; top: 0; right: 0; }
   :where(.orca-parity) .canvas-area .notification { padding-right: 48px; min-height: 48px; }
   :where(.orca-parity) .canvas-area .notification .notif-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; padding-inline: 4px; }
   :where(.orca-parity) .canvas-area .op-body .icon-btn { min-width: 44px; min-height: 44px; }

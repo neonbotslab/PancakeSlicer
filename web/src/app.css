@@ -156,7 +156,8 @@ html.orca-parity, :where(.orca-parity) body, :where(.orca-parity) #root { margin
 :where(.orca-parity) .axis { text-align: center; font-weight: 600; }
 :where(.orca-parity) .axis.x { color: #d0453a; } :where(.orca-parity) .axis.y { color: #2ea043; } :where(.orca-parity) .axis.z { color: #3b6fd0; }
 
-:where(.orca-parity) .notifications { position: absolute; right: 156px; bottom: 60px; width: 340px; max-width: calc(100% - 172px); max-height: 45%; overflow: auto; z-index: 45; display: flex; flex-direction: column; gap: 8px; }
+:where(.orca-parity) :is(.notifications, .slice-notifications) { position: absolute; max-height: 45%; overflow: auto; z-index: 45; display: flex; flex-direction: column; gap: var(--s-3); container-type: inline-size; }
+:where(.orca-parity) .notifications { right: 156px; bottom: 60px; width: 340px; max-width: calc(100% - 172px); }
 :where(.orca-parity) .notification { flex: none; position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--s-3) var(--s-4); font: var(--t-body); }
 :where(.orca-parity) .notification.failed > .notif-title { color: var(--danger); }
 :where(.orca-parity) .notification.warning > .notif-title { color: var(--status-warn); }
@@ -177,8 +178,7 @@ html.orca-parity, :where(.orca-parity) body, :where(.orca-parity) #root { margin
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-3); color: var(--ink); font: var(--t-small); font-weight: 600; cursor: pointer; }
 :where(.orca-parity) .notif-chip::after { content: ''; width: 5px; height: 5px; margin-left: var(--s-1); border: solid var(--ink-2); border-width: 0 1.5px 1.5px 0; transform: translateY(-2px) rotate(45deg); }
 :where(.orca-parity) .notif-chip[aria-expanded='true']::after { transform: translateY(1px) rotate(-135deg); }
-:where(.orca-parity) .notifications > .notification.done:nth-last-child(n + 3 of .notification.done) { display: none; }
-:where(.orca-parity) .notifications { container-type: inline-size; }
+:where(.orca-parity) :is(.notifications, .slice-notifications) > .notification.done:nth-last-child(n + 3 of .notification.done):not(:has(.notification-offer)) { display: none; }
 @media (min-width: 900px) {
   :where(.orca-parity) .canvas-area[data-viewport=prepare] .notifications { top: var(--cv-band); bottom: auto; right: var(--cv-inset); }
 }
