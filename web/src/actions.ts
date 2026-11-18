@@ -20,7 +20,7 @@ import { validateProfileSubmission } from './profiles/submission';
 import { normalizeUserPreset } from './profiles/model';
 import { shortTime } from './preview/format';
 import { flushReady } from './flush-state';
-import { calibOverrides, firstLayer, jobFields, outputKind, overrides, plateSignature } from './slice-input';
+import { calibOverrides, firstLayer, jobFields, outputKind, overrides, plateSignature, printerFilamentMatch } from './slice-input';
 import { arrange, bakeStl, bedBounds, loadMesh, loadProject, nextFreeSpot, parsePoints, plateJson, outsideBed } from './plater/geometry';
 import { projectEdits } from './plater/projectTransforms';
 import { confirmDialog, numberDialog, promptDialog } from './components/Ask';
@@ -407,7 +407,7 @@ export async function jobRequest(s = getState(), saving = false): Promise<JobReq
   return {
     files: r.files.map((f) => `${f.name} (${f.blob.size} bytes)`),
     library: JSON.stringify({ ...r.library, project: r.overrides }), plate: r.plate && JSON.stringify(r.plate), project_instances: r.project_instances,
-    events: r.events.length ? JSON.stringify(r.events) : undefined, output: r.output,
+    events: r.events.length ? JSON.stringify(r.events) : undefined, output: r.output, printer_filament_context: r.printer_filament_context,
   };
 };
 
@@ -508,6 +508,8 @@ export function runJob(api: Api, request: JobRequest, signature: string, sink: J
 export async function plateJob(s = getState(), ask = true): Promise<JobRequest | string | null> {
   const outside = outsideVolumeWarning(s);
   if (outside) return outside;
+  const match = printerFilamentMatch(s);
+  if (match.kind === 'unavailable') return match.reason;
   if (nativeSupportCapable(s) && (String(effectiveConfig(s, 'process').support_style) === 'native' || s.objects.some((o) => o.settings.support_style === 'native'))) {
     const conflicts = (await import('./plater/nativeSupport')).nativeSupportConflicts(s);
     if (conflicts && !ask) return conflicts;

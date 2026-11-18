@@ -1,5 +1,6 @@
-import { filamentVectors } from './multinozzle/config';
+import { extruderCount, filamentVectors } from './multinozzle/config';
 import { nozzleAssignments } from './multinozzle/assignments';
+import { matchPrinterFilaments } from './multinozzle/printer-filament-context';
 import type { Config, ConfigValue, JobLibrary } from './api/types';
 import { allFlush } from './flush-state';
 import { OPTIONS, jobValue } from './options';
@@ -107,16 +108,25 @@ export function appendLibrary(fd: FormData, s: State, settings: Config = {}) {
   fd.append('library', JSON.stringify({ ...library, project: { ...overrides(s), ...settings } }));
 }
 
+export function printerFilamentMatch(s: State, mode = nozzleAssignments(s).filament_map_mode) {
+  const printer = printerPreset(s);
+  return matchPrinterFilaments({ printer: s.printer, connections: s.printerConnections, vendor: printer?.vendor,
+    nozzleCount: printer ? extruderCount(printer.config) : 0, mode, supported: s.features.printer_filament_context === true });
+}
+
 export function jobFields(s: State, saving = false) {
+  const settings = overrides(saving ? { ...s, projectPlates: [] } : s);
+  const match = saving ? null : printerFilamentMatch(s, settings.filament_map_mode);
   return {
     library: jobLibrary(s),
     ...(s.project && s.projectPlates.length > 1 ? { plate_index: s.plateIndex } : {}),
     ...(s.project ? { project_instances: projectInstances(s) } : {}),
     ...(s.project && canEditProject() && projectEdits(s).edits.length ? { project_edits: projectEdits(s).edits } : {}),
-    overrides: overrides(saving ? { ...s, projectPlates: [] } : s),
+    overrides: settings,
     events: s.events.map(eventArg),
     output: outputKind(s),
     ...(s.mixedTemperatures && s.features.mixed_temperatures ? { allow_mixed_temperatures: true } : {}),
+    ...(match?.kind === 'ready' ? { printer_filament_context: match.context } : {}),
   };
 }
 

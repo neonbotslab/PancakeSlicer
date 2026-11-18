@@ -7,6 +7,7 @@ import { filament_options_with_variant, printer_extruder_options, printer_option
 import { useEffect } from 'react';
 import { Choice } from '../components/kit';
 import { SEP } from '../separator';
+import { printerFilamentMatch } from '../slice-input';
 
 export function VariantSelector({ type, config, machine, selection, onChange }: {
   type: PresetType; config: Config; machine: Config; selection: ExtruderSelection; onChange(value: ExtruderSelection): void;
@@ -40,11 +41,13 @@ export function FilamentNozzleAssignment({ slot, disabled }: { slot: number; dis
   const flow = valueAt(machine.nozzle_volume_type ?? machine.default_nozzle_volume_type, extruder, 'Standard');
   const hybrid = flow === 'Hybrid';
   const volume = valueAt(config.filament_volume_map, slot, '0');
+  const match = printerFilamentMatch(s, mode);
   return <>
     <div className="opt-line"><span className="opt-label">Nozzle mapping</span><span className="opt-field">
       <Dropdown className="combo" aria-label="Nozzle mapping" disabled={disabled} value={mode} options={['Auto For Flush', 'Auto For Match', 'Manual', ...(mode === 'Nozzle Manual' ? ['Nozzle Manual'] : [])].map((value) => ({ value, label: MAP_MODE_LABELS[value] ?? value }))}
         onValueChange={(value) => value === 'Manual' ? setNozzleAssignment(slot, Math.max(0, Math.min(count - 1, extruder))) : updateAssignments({ filament_map_mode: value })} />
     </span></div>
+    {match.kind === 'unavailable' && <p className="warning-text" role="status">{match.reason}</p>}
     <div className="opt-line"><span className="opt-label">Filament {slot + 1} nozzle</span><span className="opt-field">
       <Dropdown className="combo" aria-label={`Filament ${slot + 1} nozzle`} disabled={disabled} value={String(extruder)}
         options={Array.from({ length: count }, (_, i) => ({ value: String(i), label: `${extruderLabel(i, count, bambu)}${SEP}${valueAt(machine.nozzle_diameter, i)} mm` }))}

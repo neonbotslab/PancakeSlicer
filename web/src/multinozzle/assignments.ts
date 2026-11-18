@@ -3,6 +3,7 @@ import { effectiveConfig, getState, markStale, setState, type State } from '../s
 import { undoable } from '../state/history';
 import { listedPlates } from '../plater/plates';
 import { extruderCount, valueAt, valuesOf } from './config';
+import type { SlicedMapping } from './sliced-mapping';
 
 export const NOZZLE_MAP_KEYS = ['filament_map_mode', 'filament_map', 'filament_volume_map', 'filament_nozzle_map'] as const;
 export const VOLUME_TYPES: Record<string, number> = { Standard: 0, 'High Flow': 1, Hybrid: 2, 'TPU High Flow': 3, 'E3D High Flow': 5, 'Extra High Flow': 6 };
@@ -22,14 +23,19 @@ export function assignedExtruder(s: State, slot: number): number {
   return Number(valueAt(nozzleAssignments(s).filament_map, slot, String(effectiveConfig(s, 'machine').master_extruder_id ?? 1))) - 1;
 }
 
-export function setNozzleAssignment(slot: number, extruder: number, volume?: number) {
+export function setNozzleAssignment(slot: number, extruder: number, volume?: number, sliced?: Pick<SlicedMapping, 'filament_map' | 'filament_volume_map'>) {
   const s = getState(), machine = effectiveConfig(s, 'machine');
   if (slot < 0 || slot >= s.filamentSlots.length || extruder < 0 || extruder >= extruderCount(machine)) return;
   const previous = nozzleAssignments(s);
-  const map = Array.from({ length: s.filamentSlots.length }, (_, i) => String(i === slot ? extruder + 1 : assignedExtruder(s, i) + 1));
-  const volumes = map.map((id, i) => i === slot && volume !== undefined ? String(volume) : valueAt(previous.filament_volume_map, i,
-    String(VOLUME_TYPES[valueAt(machine.nozzle_volume_type ?? machine.default_nozzle_volume_type, Number(id) - 1, 'Standard')] ?? 0)));
-  updateAssignments({ filament_map_mode: 'Manual', filament_map: map, filament_volume_map: volumes });
+  const priorMap = s.filamentSlots.map((_, i) => sliced?.filament_map[i] || assignedExtruder(s, i) + 1);
+  const map = priorMap.map((id, i) => i === slot ? extruder + 1 : id);
+  const volumes = map.map((id, i) => {
+    const fallback = String(VOLUME_TYPES[valueAt(machine.nozzle_volume_type ?? machine.default_nozzle_volume_type, id - 1, 'Standard')] ?? 0);
+    if (i === slot && volume !== undefined) return String(volume);
+    if (i === slot && id !== priorMap[i]) return fallback;
+    return sliced ? String(sliced.filament_volume_map[i] ?? fallback) : valueAt(previous.filament_volume_map, i, fallback);
+  });
+  updateAssignments({ filament_map_mode: 'Manual', filament_map: map.map(String), filament_volume_map: volumes });
 }
 
 export function updateAssignments(config: Config) {

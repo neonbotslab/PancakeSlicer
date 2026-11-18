@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { responseError } from '../api/access';
 
-interface SlicedMapping {
+export interface SlicedMapping {
   filament_map: number[]; filament_volume_map: number[]; has_filament_switch?: boolean;
   materials: { slot: number; type: string; color: string; id: string; flow: string; diameter: number; object: boolean; support: boolean }[];
 }

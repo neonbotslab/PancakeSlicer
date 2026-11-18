@@ -1,10 +1,11 @@
 import type { Tray } from '../printers/connections';
 import { bambuFilamentId } from './material-checks';
+import { trayFeedsNozzle } from './send-nozzle';
 
 export interface SendFilament { key?: string; type: string; color: string; extruder?: number; name?: string; vendor?: string; id?: string; requiredHRC?: number; printable?: number; compatibility?: number;
   flow?: string; diameter?: number; hasFilamentSwitch?: boolean; object?: boolean; support?: boolean }
 export const isExternalTray = (id: number) => id === 254 || id === 255;
-export const availableTrays = (filament: SendFilament, trays: Tray[]) => trays.filter((t) => t.type && (filament.extruder === undefined || t.extruder === undefined || t.extruder === filament.extruder));
+export const availableTrays = (filament: SendFilament, trays: Tray[]) => trays.filter((t) => t.type && trayFeedsNozzle(t, filament.extruder));
 export function trayCode(t: Tray, trays: readonly Tray[]): string {
   if (isExternalTray(t.id)) {
     const sides = t.extruder !== undefined || trays.filter((x) => isExternalTray(x.id)).length > 1;

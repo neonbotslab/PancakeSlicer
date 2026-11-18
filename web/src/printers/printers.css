@@ -33,7 +33,9 @@
 :where(.orca-parity) .ams-map { display: grid; gap: var(--s-2); }
 :where(.orca-parity) .send-map-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); align-items: center; gap: var(--s-4); }
 :where(.orca-parity) .send-project-filament { display: flex; align-items: center; gap: var(--s-3); min-width: 0; font: var(--t-small); }
-:where(.orca-parity) .send-project-filament > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.orca-parity) .send-project-filament > span:last-child { min-width: 0; }
+:where(.orca-parity) .send-project-filament > span:last-child > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.orca-parity) .send-nozzle-recovery { display: grid; justify-items: start; gap: var(--s-2); }
 :where(.orca-parity) .send-tray-select { position: relative; min-width: 0; }
 :where(.orca-parity) .send-tray-select .combo { width: 100%; min-width: 0; }
 :where(.orca-parity) .send-tray-select[data-colour] .combo { padding-left: calc(var(--s-3) + 14px + var(--s-3)); }

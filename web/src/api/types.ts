@@ -1,5 +1,6 @@
 import type { ProfileBaseAnchor, ProfileOwnership } from '../profiles/ownership';
 import type { ProjectEdit } from '../plater/projectTransforms';
+import type { PrinterFilamentContext } from '../multinozzle/printer-filament-context';
 
 export type PresetType = 'machine' | 'process' | 'filament';
 export type ConfigValue = string | number | boolean | string[] | number[];
@@ -118,6 +119,7 @@ export interface JobRequest {
   force_planar?: boolean;
   floating?: boolean;
   allow_mixed_temperatures?: boolean;
+  printer_filament_context?: PrinterFilamentContext;
   priority?: 'low';
   preview_budget?: number;
   plan_tops?: boolean;
