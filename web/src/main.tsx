@@ -15,7 +15,9 @@ export function start() {
 
   void loadTab('process').catch(() => {});
   const booted = init();
-  void startProjects(booted).catch(() => {});
+  const projectsStarted = startProjects(booted);
+  void projectsStarted.catch(() => {});
+  void import('./notifications/slice-events').then((m) => m.startNotificationNavigation(projectsStarted));
   void booted.finally(() => {
     preloadViews();
     whenIdle(() => preloadImages(listProfiles('machine').flatMap((e) => printerCover(e.vendor, e.config) ?? [])));

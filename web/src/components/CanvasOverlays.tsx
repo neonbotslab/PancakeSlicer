@@ -35,6 +35,7 @@ import { canEditLayers } from './LayerHeight';
 import { Num } from './Num';
 import { setAssembly, useAssembly } from '../plater/assembly';
 import { Sep } from '../separator';
+import { dismissNotificationOffer, markNotificationOfferShown, notificationSettingsSnapshot, setNotificationsEnabled, subscribeNotificationSettings, wasNotificationSent } from '../notifications/browser';
 
 const PAINT_GIZMOS: [PaintKind, string, string, string][] = [
   ['support', 'toolbar_support', 'Support painting', 'L'],
@@ -202,17 +203,29 @@ function WarningLines({ warnings, open, onToggle }: { warnings: PlainWarning[]; 
 
 const TRANSIENT_MS = 8000;
 
+function NotificationOffer({ id }: { id: string }) {
+  const { hidden } = useSyncExternalStore(subscribeNotificationSettings, notificationSettingsSnapshot);
+  useEffect(() => { if (!hidden) markNotificationOfferShown(id); }, [id, hidden]);
+  return <div className="notif-body notification-offer">
+    <div>Get notified when slicing finishes in another tab?</div>
+    <div className="notif-actions"><button type="button" className="btn-primary" onClick={() => setNotificationsEnabled(true)}>Turn on</button>
+      <button type="button" className="btn" onClick={dismissNotificationOffer}>Not now</button></div>
+  </div>;
+}
+
 export function SliceNotification() {
+  const notifications = useSyncExternalStore(subscribeNotificationSettings, notificationSettingsSnapshot);
   const notice = useSyncExternalStore(subscribeAccess, accessSnapshot);
   const plateIndex = useStore((s) => s.plateIndex);
   const job = useStore((s) => s.job);
+  const expandedError = useStore((s) => s.sliceErrorExpanded);
   const outside = useStore(outsideVolumeWarning);
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [expired, setExpired] = useState<Set<string>>(new Set());
   const brief = job.state === 'canceled' ? `canceled` : null;
   const done = job.state === 'done' && !job.stale && !job.exported ? `done:${job.id}` : null;
   const machine = useStore(printerPreset);
-  const exported = job.exported ? `exported:${job.id}:${job.exported}` : null;
+  const exported = job.exported ? `exported:${job.exportNotificationKey ?? `${job.id}:${job.exported}`}` : null;
   useEffect(() => {
     const timers = ([[brief, 3000]] as const)
       .filter(([k]) => k)
@@ -229,8 +242,11 @@ export function SliceNotification() {
     return () => observer.disconnect();
   }, []);
   const busy = job.state === 'running' || job.state === 'submitting';
+  useEffect(() => {
+    if (expandedError && expandedError.attempt === job.notificationKey) setClosed((c) => { const next = new Set(c); next.delete('error'); return next; });
+  }, [expandedError, job.notificationKey]);
   const close = (k: string) => (
-    <button className="notif-close icon-btn" aria-label="Close" onClick={() => setClosed((c) => new Set(c).add(k))}>
+    <button className="notif-close icon-btn" aria-label="Close" onClick={() => { setClosed((c) => new Set(c).add(k)); if (k !== exported && notifications.offerId === job.notificationKey) dismissNotificationOffer(); }}>
       <Glyph name="close" size={14} />
     </button>
   );
@@ -257,14 +273,24 @@ export function SliceNotification() {
   const known = new Set(plateObjects.map((o) => bareName(o.name)));
   const loose = plain.filter((w) => (!w.object || !known.has(w.object)) && w.text !== null);
   const [held, setHeld] = useState(false);
-  const transient = [exported, ...perObject.filter((n) => n.r && !n.f && !n.ws.length && !n.r.slant?.why && !n.r.printedFlat).map((n) => n.key),
+  const offerId = job.state === 'done' && job.notificationKey && notifications.offerId === job.notificationKey ? job.notificationKey : null;
+  const offer = offerId !== null;
+  const backgroundResult = notifications.hidden && !!job.notificationKey && wasNotificationSent(job.notificationKey);
+  const backgroundExport = notifications.hidden && !!job.exportNotificationKey && wasNotificationSent(job.exportNotificationKey);
+  const transient = [exported, done, ...perObject.filter((n) => n.r && !n.f && !n.ws.length && !n.r.slant?.why && !n.r.printedFlat).map((n) => n.key),
     ...Object.keys(orientPrompts).map((id) => `orient${id}`)].filter((k): k is string => !!k && !expired.has(k));
+  const sliceKeyList = [done, ...perObject.map((n) => n.key)].filter(Boolean).join('|');
+  useEffect(() => {
+    if (!backgroundResult) return;
+    setExpired((e) => new Set([...e].filter((key) => !sliceKeyList.split('|').includes(key))));
+  }, [backgroundResult, job.notificationKey, sliceKeyList]);
+  const transientKeys = transient.join('|');
   useEffect(() => {
     if (held) return;
-    const timers = transient.map((k) => setTimeout(() => setExpired((e) => new Set(e).add(k)), TRANSIENT_MS));
+    const sliceKeys = new Set(sliceKeyList.split('|'));
+    const timers = transientKeys.split('|').filter(Boolean).filter((k) => !(k === exported && backgroundExport || sliceKeys.has(k) && (backgroundResult || offer || notifications.hidden && job.notificationPending))).map((k) => setTimeout(() => setExpired((e) => new Set(e).add(k)), TRANSIENT_MS));
     return () => timers.forEach(clearTimeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transient.join('|'), held]);
+  }, [transientKeys, sliceKeyList, exported, held, backgroundResult, backgroundExport, offer, notifications.hidden, job.notificationPending]);
   const compareLink = <button type="button" className="notif-link" onClick={() => (setCompareWanted('standard'), setState({ tab: 'preview' }))}>Compare</button>;
   const tier = useTier();
   const [tipsOpen, setTipsOpen] = useState(false);
@@ -293,15 +319,19 @@ export function SliceNotification() {
         <div className="notif-title">Slicing canceled</div>
       </div>
     ),
-    ...perObject.filter((n) => !n.f && !closed.has(n.key) && !expired.has(n.key)).map(({ bare, key, r, ws }) => (
+    ...perObject.filter((n) => !n.f && !closed.has(n.key) && !expired.has(n.key)).map(({ bare, key, r, ws }, index) => (
       <div key={key} className={`notification ${ws.length && !r ? 'warning' : 'done'}`}>
         {close(key)}
         <div className="notif-title notif-sentence">{r ? `${bare}: ${r.style}` : bare}</div>
         {r && <div className="notif-body">{r.fact}{r.curved && <><Sep/>{compareLink}</>}</div>}
         {r?.partial && <div className="notif-body">{r.partial[0].toUpperCase() + r.partial.slice(1)}</div>}
         <WarningLines warnings={ws} open={details.has(key)} onToggle={() => toggleDetails(key)} />
+        {offerId && index === 0 && <NotificationOffer id={offerId} />}
       </div>
     )),
+    (offerId && !perObject.some((n) => !n.f && !closed.has(n.key) && !expired.has(n.key)) || done && !perObject.length && !closed.has(done) && !expired.has(done)) && (
+      <div key="slice-ready" className="notification done">{close(done ?? `offer:${offerId}`)}<div className="notif-title">Slice ready</div>{offerId && <NotificationOffer id={offerId} />}</div>
+    ),
   ].filter((el): el is ReactElement => !!el);
   useEffect(() => { if (tips.length < 2) setTipsOpen(false); }, [tips.length]);
   return (
@@ -310,7 +340,7 @@ export function SliceNotification() {
         <div className="notif-group">
           <AccessNotification />
           {job.state === 'failed' && notice?.message !== cleanError(job.error) && !/Access token needed|Oops! Server storage is full|The slicer is busy right now/.test(job.error ?? '') && !closed.has('error') && (
-            <SliceFailed error={cleanError(job.error)} onClose={() => setClosed((c) => new Set(c).add('error'))} />
+            <SliceFailed error={cleanError(job.error)} expanded={expandedError?.attempt === job.notificationKey ? expandedError?.sequence : undefined} onClose={() => setClosed((c) => new Set(c).add('error'))} />
           )}
         </div>
       </InTopLayer>

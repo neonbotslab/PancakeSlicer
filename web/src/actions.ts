@@ -442,7 +442,8 @@ function recordWarnings(record: Record<string, unknown> | undefined, stderr: str
 export interface JobSink {
   progress(p: { pct: number; stage: string; id?: string }): void;
   done(job: JobView): void;
-  failed(error: string): void;
+  finished?(job: JobView): void;
+  failed(error: string, status?: JobStatus): void;
 }
 
 export function runJob(api: Api, request: JobRequest, signature: string, sink: JobSink, calib?: string): () => void {
@@ -455,7 +456,7 @@ export function runJob(api: Api, request: JobRequest, signature: string, sink: J
       sink.progress({ id, pct: 0, stage: 'queued' });
       const warnings: string[] = [], calibLog: string[] = [];
       let pct = 0, resulted = false;
-      const complete = (status: JobStatus) => sink.done({ id: id!, state: 'done', pct: 100, stage: 'done', status, plateSignature: signature, warnings: recordWarnings(status.record, warnings), ...(calib ? { calib, calibLog } : {}) });
+      const completedJob = (status: JobStatus): JobView => ({ id: id!, state: 'done', pct: 100, stage: 'done', status, plateSignature: signature, warnings: recordWarnings(status.record, warnings), ...(calib ? { calib, calibLog } : {}) });
       stop = api.events(id, {
         progress: (e) => {
           if (!live || resulted) return;
@@ -467,17 +468,19 @@ export function runJob(api: Api, request: JobRequest, signature: string, sink: J
         result: (status) => {
           if (!live || resulted) return;
           resulted = true;
-          complete(status);
+          sink.done(completedJob(status));
         },
         done: (status) => {
           if (!live) return;
           live = false;
-          complete(status);
+          const job = completedJob(status);
+          sink.done(job);
+          sink.finished?.(job);
         },
-        error: (msg) => {
+        error: (msg, status) => {
           if (!live) return;
           live = false;
-          sink.failed(msg);
+          sink.failed(msg, status);
         },
         log: (stream, line) => {
           if (stream === 'stdout' && line.startsWith('calib_')) calibLog.push(line);
@@ -532,12 +535,22 @@ export async function slice(calib?: { kind: string; params: string; head?: strin
   if (typeof request === 'string') return void setState({ job: { state: 'failed', pct: 0, stage: '', error: request } });
   const navigation = beginSlicePreview(signature);
   void loadPreviewView();
-  setState({ tab: 'prepare', job: { state: 'submitting', pct: 0, stage: 'uploading', plateSignature: signature, calib: calib?.kind } });
-  cancelJob = runJob(s.api, request, signature, {
-    progress: ({ id, ...p }) => { if (!current()) return; bindSlicePreview(navigation, id); setState(st => id ? {job: {...st.job, id, state: 'running', ...p}} : st.job.state === 'submitting' ? {job: {...st.job, ...p}} : {}); },
-    done: (job) => { if (!current()) return; bindSlicePreview(navigation, job.id); setState({job: {...job, stale: plateSignature(getState()) !== signature}}); },
-    failed: (error) => { if (current()) setState(st => ({job: {...st.job, state: 'failed', error}})); },
+  const { beginSliceNotice } = await import('./notifications/slice-events');
+  if (!current()) return;
+  const notification = beginSliceNotice({ projectId, generation: document, plate, file: s.project?.name ?? s.objects[0]?.name ?? '' });
+  setState({ tab: 'prepare', sliceErrorExpanded: null, job: { state: 'submitting', pct: 0, stage: 'uploading', plateSignature: signature, calib: calib?.kind, notificationKey: notification.key } });
+  let notificationJobId: string | undefined;
+  const stop = runJob(s.api, request, signature, {
+    progress: ({ id, ...p }) => { if (id) notificationJobId = id; if (!current()) return; bindSlicePreview(navigation, id); setState(st => id ? {job: {...st.job, id, state: 'running', ...p}} : st.job.state === 'submitting' ? {job: {...st.job, ...p}} : {}); },
+    done: (job) => { if (!current()) return; bindSlicePreview(navigation, job.id); setState({job: {...job, notificationKey: notification.key, notificationPending: true, stale: plateSignature(getState()) !== signature}}); },
+    finished: (job) => notification.ready(job),
+    failed: (error, status) => {
+      if (current()) setState(st => ({job: {...st.job, state: 'failed', error}}));
+      if (status?.state === 'failed' || !notificationJobId) notification.failed(notificationJobId, error);
+      else notification.cancel();
+    },
   }, calib?.kind);
+  cancelJob = () => { notification.cancel(); stop(); };
 }
 
 export function cancelSlice() {
@@ -545,7 +558,7 @@ export function cancelSlice() {
   ++sliceGeneration;
   cancelJob?.();
   cancelJob = null;
-  setState({ job: { state: 'canceled', pct: 0, stage: '' } });
+  setState((s) => ({ job: { ...s.job, state: 'canceled', pct: 0, stage: '' } }));
 }
 
 export function exportFilename(s = getState()): string {
@@ -600,6 +613,9 @@ export async function download() {
   if (import.meta.env.MODE === 'demo') return void toast('Not available in demo mode', null, 3500, 'warning');
   const s = getState();
   if (!s.api || !canExport(s) || !s.job.id) return void (s.api && toast(exportBlocker(s)));
+  const notificationProjectId = projectFlow.get().context.id;
+  const { notifyExported } = await import('./notifications/slice-events');
+  if (!canExport() || getState().job.id !== s.job.id) return;
   const task = output.begin('exporting');
   let href: string;
   try {
@@ -623,6 +639,7 @@ export async function download() {
   document.body.appendChild(a);
   a.click();
   task.done();
+  notifyExported(a.download, notificationProjectId);
   a.remove();
   setTimeout(() => URL.revokeObjectURL(href), 60000);
 }

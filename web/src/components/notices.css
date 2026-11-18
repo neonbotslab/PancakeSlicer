@@ -46,3 +46,8 @@
   :where(.orca-parity) .toast, :where(.orca-parity) .notification { animation: none; }
   :where(.orca-parity) .loading-bar.indeterminate > div { animation: none; width: 100%; opacity: 0.5; }
 }
+:where(.orca-parity) .notification-offer .notif-actions { display: flex; gap: 8px; margin-top: 8px; }
+:where(.orca-parity) .notification-setting { gap: 16px; }
+:where(.orca-parity) .form-row.notification-setting > span { flex: 1 1 0; }
+:where(.orca-parity) .form-row.notification-setting > .orca-switch { flex: 0 0 32px; width: 32px; min-width: 32px; max-width: 32px; }
+:where(.orca-parity) .notification-setting-note { margin: 0; color: var(--ink-2); font: var(--t-small); }

@@ -117,7 +117,7 @@ export function readJobEvents(id: string, seq: number, signal: AbortSignal,
 export function followJob(api: Api, tracked: TrackedJob, options: {
   machine?: ReturnType<typeof createJob>; seq?: number;
   progress?: (p: ProgressEvent) => void; done?: (status: CanonicalJobStatus) => void;
-  failed?: (message: string) => void; checkpoint?: (seq: number, stage: string) => void;
+  failed?: (message: string, status?: CanonicalJobStatus) => void; checkpoint?: (seq: number, stage: string) => void;
 } = {}) {
   const m = options.machine ?? createJob();
   let streamTimer: ReturnType<typeof setTimeout> | undefined;
@@ -131,7 +131,7 @@ export function followJob(api: Api, tracked: TrackedJob, options: {
     options.checkpoint?.(last, m.get().value);
     if (jobTerminal(m.get().value)) {
       if (m.get().value === 'done') options.done?.(status);
-      else options.failed?.(status.error ?? `Job ${m.get().value}. Click Retry to try again.`);
+      else options.failed?.(status.error ?? `Job ${m.get().value}. Click Retry to try again.`, status);
       ctl.abort(); clearTimeout(timer); clearTimeout(streamTimer);
     }
   };

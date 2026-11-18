@@ -199,6 +199,10 @@ export async function exportAll() {
   if (!s.api || !plates.length) return;
   try {
     const { zipSync } = await import('fflate');
+    const { notifyExported } = await import('../notifications/slice-events');
+    const { project } = await import('../flow/project');
+    if (getState().objects !== s.objects || getState().project !== s.project) return;
+    const notificationProjectId = project.get().context.id;
     const files: Record<string, [Uint8Array, { level: 0 }]> = {};
     for (const p of plates) {
       const state = asPlate(s, p.index);
@@ -210,6 +214,7 @@ export async function exportAll() {
     const href = URL.createObjectURL(new Blob([zipSync(files)], { type: 'application/zip' }));
     const a = document.createElement('a');
     a.href = href; a.download = `${name}.zip`; document.body.appendChild(a); a.click(); a.remove();
+    notifyExported(a.download, notificationProjectId);
     setTimeout(() => URL.revokeObjectURL(href), 60000);
   } catch (e) {
     toast(`Oops! Export failed: ${e instanceof Error ? e.message : e}`);

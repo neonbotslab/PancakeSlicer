@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Glyph } from './Glyph';
 import { slice } from '../actions';
@@ -71,10 +71,12 @@ function useNoticeLane(msg: ReactNode): Element | null {
   return lane;
 }
 
-export function SliceFailed({ error, onClose }: { error: string; onClose(): void }) {
+export function SliceFailed({ error, expanded, onClose }: { error: string; expanded?: number; onClose(): void }) {
   const { title, step } = sliceFailure(error);
   const canRetry = useStore((s) => s.objects.length > 0);
   const [copied, setCopied] = useState(false);
+  const detail = useRef<HTMLDetailsElement>(null);
+  useEffect(() => { if (expanded && detail.current) detail.current.open = true; }, [expanded]);
   return (
     <div className="notification failed slice-failed" role="alert">
       <button type="button" className="notif-close icon-btn" aria-label="Close" onClick={onClose}>
@@ -84,7 +86,7 @@ export function SliceFailed({ error, onClose }: { error: string; onClose(): void
       <div className="notif-body">{step}</div>
       <div className="slice-failed-actions">
         {canRetry && <button type="button" className="btn-primary" onClick={() => void slice()}>Slice again</button>}
-        <details>
+        <details ref={detail}>
           <summary>Details</summary>
           <pre className="slice-failed-raw">{error}</pre>
           <button type="button" className="notif-link" onClick={() => setCopied(copyToClipboard(error))}>

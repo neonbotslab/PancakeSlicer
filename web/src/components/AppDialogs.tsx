@@ -7,6 +7,8 @@ import { setThemePref, subscribeTheme, themePref, type ThemePref } from '../them
 import { cameraPrefsSnapshot, setCameraPrefs, subscribeCamera, type CameraPrefs } from '../camera';
 import { InfoTip } from './InfoTip';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
+import { Switch } from './fields';
+import { notificationSettingsSnapshot, setNotificationsEnabled, subscribeNotificationSettings } from '../notifications/browser';
 
 const About = preloadable(() => import('./About'));
 const PlateSettings = preloadable(() => import('./PlateSettings'));
@@ -41,6 +43,7 @@ function Preferences() {
   const developerMode = useStore((s) => s.developerMode);
   const mixed = useStore((s) => s.mixedTemperatures);
   const canMix = useStore((s) => !!s.features.mixed_temperatures);
+  const notifications = useSyncExternalStore(subscribeNotificationSettings, notificationSettingsSnapshot);
   return (
     <Modal size="m" label="Preferences" onClose={close}>
       <ModalTitle title="Preferences" onClose={close} />
@@ -56,6 +59,11 @@ function Preferences() {
             onChange={(e) => { const v = Number(e.target.value); if (v >= 0.05 && v <= 2) setCameraPrefs({ orbitMult: v }); }} /></label>
         <label className="modal-check"><Check checked={camera.zoomToMouse} onCheckedChange={(next) => setCameraPrefs({ zoomToMouse: next })} />Zoom to mouse position</label>
         <label className="modal-check"><Check checked={camera.reverseZoom} onCheckedChange={(next) => setCameraPrefs({ reverseZoom: next })} />Reverse zoom direction</label>
+        <h3 className="modal-group">Notifications</h3>
+        <label className="form-row notification-setting"><span>Notify me when PancakeSlicer is in the background</span>
+          <Switch aria-label="Notify me when PancakeSlicer is in the background" checked={notifications.enabled && !notifications.disabled} disabled={notifications.disabled} onChange={setNotificationsEnabled} /></label>
+        {notifications.permission === 'denied' && <p className="notification-setting-note">Blocked by your browser. Allow notifications for this site from the address bar.</p>}
+        {notifications.permission === 'unsupported' && <p className="notification-setting-note">Needs a secure (https) address.</p>}
         <h3 className="modal-group">Advanced</h3>
         <label className="modal-check"><Check checked={developerMode} onCheckedChange={(next) => setDeveloperMode(next)} />Developer mode</label>
         {canMix && <label className="modal-check"><Check checked={mixed} onCheckedChange={(next) => setMixedTemperatures(next)} />Allow mixed filament temperatures</label>}

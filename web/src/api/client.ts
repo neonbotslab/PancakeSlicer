@@ -13,7 +13,7 @@ export interface Api {
   presets(vendor: string, models: string[], update?: (c: PresetCatalog) => void, names?: string[]): Promise<PresetCatalog>;
   submit(req: JobRequest, signal?: AbortSignal, onUpload?: (fraction: number) => void): Promise<string>;
   status(id: string): Promise<JobStatus>;
-  events(id: string, on: { progress(e: ProgressEvent): void; done(s: JobStatus): void; error(msg: string): void; log?(stream: string, line: string): void; result?(s: JobStatus): void }): () => void;
+  events(id: string, on: { progress(e: ProgressEvent): void; done(s: JobStatus): void; error(msg: string, status?: JobStatus): void; log?(stream: string, line: string): void; result?(s: JobStatus): void }): () => void;
   cancel(id: string): Promise<void>;
   downloadUrl(id: string): string;
   movesUrl(id: string): string;
@@ -117,7 +117,7 @@ const realApi: Api = {
         }
         close();
         if (s.state === 'done') on.done(s);
-        else on.error(s.error ?? `job ${s.state}`);
+        else on.error(s.error ?? `job ${s.state}`, s);
       } catch (e) {
         if (!disposed) {
           close();

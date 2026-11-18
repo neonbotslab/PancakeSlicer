@@ -218,7 +218,8 @@ const openConnection = (printer: string) => setState({ presetUx: { kind: 'preset
 export function DeviceView() {
   const connections = useStore((s) => s.printerConnections);
   useStore((s) => s.userPresets);
-  const platePrinter = useStore((s) => s.printer), [selected, select] = useState(platePrinter);
+  const platePrinter = useStore((s) => s.printer);
+  const selected = useStore((s) => s.devicePrinter) ?? platePrinter;
   const setups = listProfiles('machine').map((setup) => ({ ...setup, model: printerModel(getState(), setup.key) }));
   const printers = connections.connections.filter((c) => c.printer && setups.some((p) => p.key === c.printer));
   const current = printers.find((c) => c.printer === selected) ?? printers[0];
@@ -229,7 +230,7 @@ export function DeviceView() {
       const setup = setups.find((p) => p.key === connection.printer)!;
       const own = connection.name && connection.name !== setup.name ? connection.name : connection.serial ? `Serial ${connection.serial.slice(-4)}` : undefined;
       const cover = printerCover(setup.vendor, setup.config, setup.model), state = presenceStatus(connections.live, connection, connections.status[connection.printer], true);
-      return <button type="button" className="device-printer" aria-pressed={connection.printer === current?.printer} key={connection.printer} onClick={() => select(connection.printer)}>
+      return <button type="button" className="device-printer" aria-pressed={connection.printer === current?.printer} key={connection.printer} onClick={() => setState({ devicePrinter: connection.printer })}>
         <PrinterRender cover={cover} /><span><strong>{setup.name}</strong>{own && <span className="device-printer-own">{own}</span>}<span className="status-text" data-tone={state.tone}>{state.label}</span></span>
       </button>;
     })}{!printers.length && <p className="device-muted">No printers connected</p>}</div>

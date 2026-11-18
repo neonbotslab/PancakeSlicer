@@ -152,6 +152,9 @@ export interface JobView {
   calib?: string;
   calibLog?: string[];
   exported?: string;
+  notificationKey?: string;
+  notificationPending?: boolean;
+  exportNotificationKey?: string;
 }
 
 export interface SlantEdit {
@@ -247,6 +250,8 @@ export interface State {
   plateIndex: number;
   project: File | null;
   projectName: string | null;
+  devicePrinter: string | null;
+  sliceErrorExpanded: { attempt: string; sequence: number } | null;
   job: JobView;
   noticeLog: NoticeEntry[];
   toast: string | null;
@@ -345,6 +350,8 @@ let state: State = {
   plateIndex: 1,
   project: null,
   projectName: null,
+  devicePrinter: null,
+  sliceErrorExpanded: null,
   job: { state: 'idle', pct: 0, stage: '' },
   noticeLog: [],
   toast: null,
