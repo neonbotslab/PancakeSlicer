@@ -3,6 +3,8 @@ import { getState, setState } from '../state/store';
 import { printerCapabilities } from './capabilities';
 import type { Transfer } from '../flow/transfer';
 import { joinParts, SEP } from '../separator';
+import { PrinterNotificationTracker } from '../notifications/printer-events';
+import { publishNotice } from '../notifications/browser';
 
 export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet' | 'flashforge';
 export interface PrinterConnection {
@@ -39,6 +41,7 @@ export const connectionOf = (c: PrinterConnections, printer: string) => c.connec
 export const unassigned = (c: PrinterConnections) => c.connections.filter((x) => !x.printer);
 
 let source: EventSource | null = null;
+const notifications = new PrinterNotificationTracker();
 export function followConnections() {
   if (import.meta.env.MODE === 'demo') {
     setState({ printerConnections: { enabled: true, live: true, connections: [], status: {}, transfers: [] } });
@@ -48,11 +51,13 @@ export function followConnections() {
   source = new EventSource('/api/printer-connections/events');
   source.addEventListener('state', (e) => {
     const snap = JSON.parse((e as MessageEvent).data) as Omit<PrinterConnections, 'live' | 'status'> & { status: PrinterStatus[] };
+    for (const notice of notifications.observe(snap.connections, snap.status)) void publishNotice(notice);
     setState({ printerConnections: { enabled: snap.enabled, live: true, connections: snap.connections, transfers: snap.transfers,
       status: Object.fromEntries(snap.status.map((s) => [s.printer, s])) } });
   });
   source.onerror = () => {
     const c = getState().printerConnections;
+    notifications.observe(c.connections, []);
     if (c.live) setState({ printerConnections: { ...c, live: false } });
   };
 }
