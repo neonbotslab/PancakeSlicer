@@ -87,7 +87,7 @@ self.addEventListener('notificationclick', (event) => {
     }
     event.notification.close();
     const url = new URL('/', self.location.origin);
-    if (destination.kind !== 'focus') url.searchParams.set('orca-notification', JSON.stringify(destination));
+    if (destination.kind !== 'focus') url.hash = `orca-notification=${encodeURIComponent(JSON.stringify(destination))}`;
     await self.clients.openWindow(url.href);
   })().catch(() => event.notification.close()));
 });

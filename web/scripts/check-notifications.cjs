@@ -136,7 +136,17 @@ async function checkLifecycle(browser) {
   assert.doesNotMatch(await page.evaluate(() => window.notifyMessages[1].options.body), /bad_alloc|stack trace/);
   await page.evaluate(() => { window.notifyHidden = false; document.dispatchEvent(new Event('visibilitychange')); window.notifyMessages[1].onclick(); });
   await page.waitForFunction(() => !!document.querySelector('.slice-failed details')?.open);
+  await page.evaluate(() => {
+    const current = window.__plater.getState().job;
+    window.__plater.setState({ job: { ...current, id: 'newer-completed-job', state: 'done', pct: 100, stage: 'done' }, notificationError: null });
+    window.notifyMessages[1].onclick();
+  });
+  await page.waitForFunction(() => !!window.__plater.getState().notificationError);
+  assert.equal(await page.evaluate(() => window.__plater.getState().job.id), 'newer-completed-job');
+  await page.evaluate(() => window.notifyMessages[0].onclick());
+  await page.waitForFunction(() => window.__plater.getState().tab === 'preview');
+  assert.equal(await page.evaluate(() => window.__plater.getState().job.id), 'newer-completed-job');
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ outcomes: await page.evaluate(() => window.notifyMessages.map(n => ({ title: n.title, body: n.options.body, tag: n.options.tag }))), earlyResultSilent: true, hiddenToastRetained: true, previewClick: true, failureDetailsClick: true, errors }));
+  console.log(JSON.stringify({ outcomes: await page.evaluate(() => window.notifyMessages.map(n => ({ title: n.title, body: n.options.body, tag: n.options.tag }))), earlyResultSilent: true, hiddenToastRetained: true, previewClick: true, failureDetailsClick: true, staleClicksPreserveNewerJob: true, errors }));
   await context.close();
 }

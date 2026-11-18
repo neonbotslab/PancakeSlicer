@@ -538,7 +538,7 @@ export async function slice(calib?: { kind: string; params: string; head?: strin
   const { beginSliceNotice } = await import('./notifications/slice-events');
   if (!current()) return;
   const notification = beginSliceNotice({ projectId, generation: document, plate, file: s.project?.name ?? s.objects[0]?.name ?? '' });
-  setState({ tab: 'prepare', sliceErrorExpanded: null, job: { state: 'submitting', pct: 0, stage: 'uploading', plateSignature: signature, calib: calib?.kind, notificationKey: notification.key } });
+  setState({ tab: 'prepare', sliceErrorExpanded: null, notificationError: null, job: { state: 'submitting', pct: 0, stage: 'uploading', plateSignature: signature, calib: calib?.kind, notificationKey: notification.key } });
   let notificationJobId: string | undefined;
   const stop = runJob(s.api, request, signature, {
     progress: ({ id, ...p }) => { if (id) notificationJobId = id; if (!current()) return; bindSlicePreview(navigation, id); setState(st => id ? {job: {...st.job, id, state: 'running', ...p}} : st.job.state === 'submitting' ? {job: {...st.job, ...p}} : {}); },

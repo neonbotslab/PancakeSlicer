@@ -230,9 +230,11 @@ export function setNotificationNavigator(callback: (destination: Destination) =>
   navigate = callback;
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
-  const raw = url.searchParams.get(ROUTE_PARAM);
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  const raw = fragment.get(ROUTE_PARAM);
   if (raw === null) return;
-  url.searchParams.delete(ROUTE_PARAM);
+  fragment.delete(ROUTE_PARAM);
+  url.hash = fragment.toString();
   try {
     window.history.replaceState(window.history.state, '', url);
     const destination = validateDestination(JSON.parse(raw));

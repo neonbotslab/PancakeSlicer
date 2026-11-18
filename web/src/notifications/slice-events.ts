@@ -73,26 +73,28 @@ async function navigate(destination: Destination) {
     await openProject(destination.projectId);
     if (project.get().context.id !== destination.projectId) return;
   }
+  if (destination.kind === 'slice-error') {
+    setState({ appDialog: null, tab: 'prepare', notificationError: { attempt: destination.attempt, error: destination.error },
+      sliceErrorExpanded: { attempt: destination.attempt, sequence: ++errorSequence } });
+    return;
+  }
   const s = getState();
   if (destination.plate !== s.plateIndex && !s.projectPlates.some((p) => p.index === destination.plate)) return;
   selectPlate(destination.plate);
   if (getState().plateIndex !== destination.plate) return;
   const job = getState().job;
-  if (destination.kind === 'preview') {
-    if (job.id !== destination.jobId || job.state !== 'done') {
-      if (job.state === 'running' || job.state === 'submitting' || recoverySignature(plateSignature(getState())) !== destination.signature) return;
-      const status = await getState().api?.status(destination.jobId);
-      if (status?.state !== 'done' || project.get().context.id !== destination.projectId || getState().plateIndex !== destination.plate
-          || recoverySignature(plateSignature(getState())) !== destination.signature) return;
-      setState({ job: { id: destination.jobId, state: 'done', pct: 100, stage: 'done', status, plateSignature: plateSignature(getState()) } });
-    }
-  } else {
-    if (job.state === 'running' || job.state === 'submitting') return;
-    if (job.state !== 'failed' || job.notificationKey !== destination.attempt)
-      setState({ job: { state: 'failed', pct: 0, stage: '', error: destination.error, notificationKey: destination.attempt } });
+  if (job.state === 'done' && job.id !== destination.jobId) {
+    setState({ tab: 'preview', appDialog: null, notificationError: null });
+    return;
   }
-  setState({ appDialog: null, tab: destination.kind === 'preview' ? 'preview' : 'prepare',
-    sliceErrorExpanded: destination.kind === 'slice-error' ? { attempt: destination.attempt, sequence: ++errorSequence } : null });
+  if (job.id !== destination.jobId || job.state !== 'done') {
+    if (job.state !== 'idle' || recoverySignature(plateSignature(getState())) !== destination.signature) return;
+    const status = await getState().api?.status(destination.jobId);
+    if (status?.state !== 'done' || project.get().context.id !== destination.projectId || getState().plateIndex !== destination.plate
+        || recoverySignature(plateSignature(getState())) !== destination.signature || getState().job.state !== 'idle') return;
+    setState({ job: { id: destination.jobId, state: 'done', pct: 100, stage: 'done', status, plateSignature: plateSignature(getState()) } });
+  }
+  setState({ appDialog: null, tab: 'preview', sliceErrorExpanded: null, notificationError: null });
 }
 
 export function startNotificationNavigation(ready: Promise<unknown>) {

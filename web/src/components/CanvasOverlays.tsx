@@ -219,6 +219,7 @@ export function SliceNotification() {
   const plateIndex = useStore((s) => s.plateIndex);
   const job = useStore((s) => s.job);
   const expandedError = useStore((s) => s.sliceErrorExpanded);
+  const notificationError = useStore((s) => s.notificationError);
   const outside = useStore(outsideVolumeWarning);
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [expired, setExpired] = useState<Set<string>>(new Set());
@@ -339,7 +340,8 @@ export function SliceNotification() {
       <InTopLayer>
         <div className="notif-group">
           <AccessNotification />
-          {job.state === 'failed' && notice?.message !== cleanError(job.error) && !/Access token needed|Oops! Server storage is full|The slicer is busy right now/.test(job.error ?? '') && !closed.has('error') && (
+          {notificationError && <SliceFailed error={cleanError(notificationError.error)} expanded={expandedError?.sequence} onClose={() => setState({ notificationError: null })} />}
+          {!notificationError && job.state === 'failed' && notice?.message !== cleanError(job.error) && !/Access token needed|Oops! Server storage is full|The slicer is busy right now/.test(job.error ?? '') && !closed.has('error') && (
             <SliceFailed error={cleanError(job.error)} expanded={expandedError?.attempt === job.notificationKey ? expandedError?.sequence : undefined} onClose={() => setClosed((c) => new Set(c).add('error'))} />
           )}
         </div>

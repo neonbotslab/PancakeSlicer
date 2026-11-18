@@ -252,6 +252,7 @@ export interface State {
   projectName: string | null;
   devicePrinter: string | null;
   sliceErrorExpanded: { attempt: string; sequence: number } | null;
+  notificationError: { attempt: string; error: string } | null;
   job: JobView;
   noticeLog: NoticeEntry[];
   toast: string | null;
@@ -352,6 +353,7 @@ let state: State = {
   projectName: null,
   devicePrinter: null,
   sliceErrorExpanded: null,
+  notificationError: null,
   job: { state: 'idle', pct: 0, stage: '' },
   noticeLog: [],
   toast: null,

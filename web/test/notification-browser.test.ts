@@ -235,11 +235,11 @@ test('a worker without the client handshake yields one window notification', asy
 
 test('navigation accepts a validated worker message or a one-time startup destination', async (t) => {
   const env = fakeBrowser(t);
-  env.window.location.searchParams.set('orca-notification', JSON.stringify(notice.destination));
+  env.window.location.hash = `orca-notification=${encodeURIComponent(JSON.stringify(notice.destination))}`;
   const browser = await loadBrowser();
   const destinations: Destination[] = [];
   browser.setNotificationNavigator((destination) => destinations.push(destination));
-  assert.equal(env.window.location.search, '');
+  assert.equal(env.window.location.hash, '');
   browser.setNotificationNavigator((destination) => destinations.push(destination));
   const post = (destination: unknown) => env.serviceWorker.dispatchEvent(new MessageEvent('message', {
     data: { type: 'orca:notification-navigate', destination },
@@ -283,9 +283,15 @@ test('a worker notification click focuses only its originating client and opens 
   await click('matching', notice.destination);
   assert.deepEqual(calls.splice(0), ['matching', 'focus', 'close', { type: 'orca:notification-navigate', destination: notice.destination }]);
   const expected = new URL('/', origin);
-  expected.searchParams.set('orca-notification', JSON.stringify(notice.destination));
+  expected.hash = `orca-notification=${encodeURIComponent(JSON.stringify(notice.destination))}`;
   await click('closed', { ...notice.destination, url: 'https://example.net' });
   assert.deepEqual(calls.splice(0), ['closed', 'close', expected.href]);
+  const errorDestination = { kind: 'slice-error', projectId: 'p1', plate: 1, attempt: 'a1', error: 'Private diagnostic detail' };
+  await click('closed', errorDestination);
+  const fallback = new URL(String(calls.at(-1)));
+  assert.equal(fallback.search, '');
+  assert.deepEqual(JSON.parse(new URLSearchParams(fallback.hash.slice(1)).get('orca-notification') ?? 'null'), errorDestination);
+  calls.splice(0);
   await click('closed', { kind: 'link', url: 'https://example.net' });
   assert.deepEqual(calls, ['close']);
 });
