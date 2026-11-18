@@ -63,3 +63,46 @@ async function forget(prefix) {
   const cache = await caches.open(CACHE);
   for (const key of await cache.keys()) if (new URL(key.url).pathname.startsWith(prefix)) await cache.delete(key);
 }
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'orca:notification-client' || event.source?.type !== 'window') return;
+  event.ports[0]?.postMessage(event.source.id);
+});
+
+self.addEventListener('notificationclick', (event) => {
+  const data = event.notification.data;
+  if (data?.type !== 'orca:notification-navigate') return;
+  const destination = notificationDestination(data.destination);
+  if (!destination || !isNotificationId(data.clientId)) {
+    event.notification.close();
+    return;
+  }
+  event.waitUntil((async () => {
+    const client = await self.clients.get(data.clientId);
+    if (client?.type === 'window') {
+      try { await client.focus(); } catch { }
+      event.notification.close();
+      client.postMessage({ type: data.type, destination });
+      return;
+    }
+    event.notification.close();
+    const url = new URL('/', self.location.origin);
+    if (destination.kind !== 'focus') url.searchParams.set('orca-notification', JSON.stringify(destination));
+    await self.clients.openWindow(url.href);
+  })().catch(() => event.notification.close()));
+});
+
+function isNotificationId(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function notificationDestination(value) {
+  if (!value || typeof value !== 'object') return null;
+  if (value.kind === 'focus') return { kind: 'focus' };
+  if (value.kind === 'device' && isNotificationId(value.printer)) return { kind: 'device', printer: value.printer };
+  const { projectId, plate } = value;
+  if (!isNotificationId(projectId) || !Number.isSafeInteger(plate) || plate < 1) return null;
+  if (value.kind === 'preview' && isNotificationId(value.jobId) && isNotificationId(value.signature)) return { kind: 'preview', projectId, plate, jobId: value.jobId, signature: value.signature };
+  if (value.kind === 'slice-error' && isNotificationId(value.attempt) && typeof value.error === 'string') return { kind: 'slice-error', projectId, plate, attempt: value.attempt, error: value.error };
+  return null;
+}
