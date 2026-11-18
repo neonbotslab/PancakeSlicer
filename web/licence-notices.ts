@@ -60,6 +60,10 @@ export function licenceNotices(emit = true): Plugin {
           + (embedded.length ? `\nNotices in the bundled files:\n\n${embedded.join('\n\n')}\n` : '');
       });
       this.emitFile({
+        type: 'asset', fileName: 'licence.txt',
+        source: readFileSync(new URL('../LICENSE', import.meta.url)),
+      });
+      this.emitFile({
         type: 'asset', fileName: 'third-party-licences.txt',
         source: 'Third-party software in this web application. The application itself is AGPL-3.0;\n'
           + 'see About for its Corresponding Source.\n\n' + notices.join('\n' + '-'.repeat(72) + '\n\n'),
