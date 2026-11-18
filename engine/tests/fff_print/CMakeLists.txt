@@ -49,6 +49,10 @@ orcaslicer_discover_tests(${_TEST_NAME}_tests)
 add_executable(nonplanar_slice_tool nonplanar_slice_tool.cpp)
 target_link_libraries(nonplanar_slice_tool test_common libslic3r)
 set_property(TARGET nonplanar_slice_tool PROPERTY FOLDER "tests")
+add_test(NAME nonplanar_nozzle_mapping
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_nozzle_mapping.py"
+        --tool $<TARGET_FILE:nonplanar_slice_tool>)
+set_tests_properties(nonplanar_nozzle_mapping PROPERTIES LABELS "CLI" TIMEOUT 120)
 add_executable(ns2_teacher ns2_teacher.cpp)
 target_link_libraries(ns2_teacher libslic3r)
 set_property(TARGET ns2_teacher PROPERTY FOLDER "tests")

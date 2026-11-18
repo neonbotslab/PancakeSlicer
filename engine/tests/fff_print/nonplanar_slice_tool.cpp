@@ -80,6 +80,7 @@
 #include "libslic3r/miniz_extension.hpp"
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/trim.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/nowide/fstream.hpp>
@@ -117,6 +118,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -160,6 +162,7 @@ struct Args
     int         calib_fit = -1;
     int         plate_index = 0;
     std::vector<std::string> filaments, colours;
+    std::optional<std::string> printer_filament_context;
     std::vector<std::pair<std::string, int>> parts;
     std::vector<std::pair<std::string, std::string>> overrides;
     std::vector<CustomGCode::Item> events;
@@ -232,54 +235,151 @@ Model read_input(const std::string &file)
     return Model::read_from_file(file, nullptr, nullptr, LoadStrategy::LoadModel | LoadStrategy::AddDefaultInstances);
 }
 
-[[noreturn]] void usage(const std::string &error)
+[[noreturn]] void usage(const std::string& error = {})
 {
-    std::cerr << "error: " << error << "\n"
-              << "usage: nonplanar_slice_tool --printer NAME --process NAME --filament NAME [--vendor Prusa]\n"
-                 "       --detect-regions OUT.json MODEL [--printer NAME --vendor VENDOR] (no slicing)\n"
-                 "       --plan-tops OUT.json: with the print arguments and no -o, the curved tops plan per detected region\n"
-                 "       [--profiles DIR] [--datadir DIR] [--bed-type NAME] [--set key=value]... [--center X,Y]\n"
-                 "       [--config-out FILE] [--project-out FILE] [--head-out FILE] [--gcode-3mf FILE] [--json FILE]\n"
-                 "       [--field-file FIELD.npz] [--dump-field FIELD.npz]\n"
-                 "       [--atom TOOLPATH] [--verify] [--explain] [--auto-orient | --orient-only | --orient-scores] [--floating] [--save-3mf PROJECT.3mf]\n"
-                 "       [--plate-index N] [--layer-profile adaptive:QUALITY | ramp:H_BOTTOM:H_TOP | range:DEPTH:H | file:PATH] [--calib-head ID]\n"
-                 "       -o OUT.gcode (MODEL | PROJECT.3mf | --plate PLATE.json | --project SPEC.json | --calib TEST)\n"
-                 "       [--moves-out FILE [--moves-extended]] [--progress] [--calib-params key=value,...] [--preset-cache DIR]\n"
-                 "       [--stage-cache DIR [--stage-cache-max-mb N]]\n"
-                 "       (plate JSON objects take \"plate\": N; a plate JSON of several plates slices with --plate-index N)\n"
-                 "       (plate JSON objects and volumes take \"paint\"; plate JSON objects take \"layer_height_profile\")\n"
-                 "       (plate JSON volumes take \"type\": \"seam\" and \"seam_mode\": center|left|right|enforced|blocked|neutral)\n"
-                 "       (plate JSON objects take \"ranges\")\n"
-                 "       (plate JSON objects take \"brim_ears\": [{\"x\": X, \"y\": Y, \"radius\": R}])\n"
-                 "       (plate JSON plates take \"settings\" and \"locked\"; --save-3mf preserves per-plate settings and locks)\n"
-                 "       [--surface-grid [--surface-grid-max-cells N]]   (with --json: per-cell top surface error)\n"
-                 "       [--force-planar]   (nonplanar_mode off on the plate, objects, volumes and height ranges)\n"
-                 "       [--allow-mixed-temperatures]\n"
-                 "       nonplanar_slice_tool --explode-3mf IN.3mf OUTDIR   (editable plate.json and volume meshes, no slice)\n"
-                 "       [--edit EDITS.json]   (a loaded PROJECT.3mf: add/delete objects and instances, set filaments; --edit takes \"add_volume\"; --edit takes \"set_paint\")\n"
-                 "       [--cut-only Z | X,Y,Z,NX,NY,NZ [--cut-keep upper|lower|both] [--cut-place-lower]]\n"
-                 "       [--cut-connectors JSON]   (plug/dowel/snap, shape, pos, radius, height/depth, tolerance)\n"
-                 "       [--cut-mode planar|dovetail] [--cut-dovetail JSON]\n"
-                 "       [--arrange-only OUT.json [--arrange-spacing MM] [--arrange-no-rotation]]   (the desktop's arrange, no slice)\n"
-                 "       [--arrange-multi-materials 0|1]   (with --arrange-only; default 1)\n"
-                 "       [--wipe-tower-only OUT.json]   (with --plate: per-plate prime tower estimate, no slice)\n"
-                 "       [--patch-preview FILE.json [--patch-preview-budget S] [--patch-preview-max-triangles N]]\n"
-                 "       [--step-linear-deflection MM] [--step-angle-deflection A] [--step-split-compound]\n"
-                 "       text surface: --use-surface --surface TARGET --at X,Y,Z --normal NX,NY,NZ [--up UX,UY,UZ] [--angle DEG] [--surface-outside]\n"
-                 "       nonplanar_slice_tool --export-3mf-generic IN.3mf OUT.3mf   (geometry only)\n"
-                 "       nonplanar_slice_tool --export-drc IN OUT.drc [--bits N]   (geometry only)\n"
-                 "       nonplanar_slice_tool --emboss-svg IN.svg OUT.stl|OUT.3mf --depth MM [--size MM]\n"
-                 "       SVG --size scales the larger side; optional --use-surface --surface TARGET --at X,Y,Z --normal X,Y,Z [--up X,Y,Z] [--angle DEG] [--surface-outside]\n"
-                 "       nonplanar_slice_tool --emboss-fonts   (bundled font catalog as JSON)\n"
-                 "       nonplanar_slice_tool --emboss-text OUT.stl|OUT.3mf --text TEXT [--font FILE | --font-name NAME] --size MM --depth MM\n"
-                 "                           [--bold] [--italic] [--line-spacing FACTOR] [--char-gap N] [--align left|center|right]   (desktop emboss, no slice)\n"
-                 "       nonplanar_slice_tool --mesh-boolean union|difference|intersection --a A --b B [--b C] OUT.stl|OUT.3mf\n"
-                 "       nonplanar_slice_tool --repair-mesh IN OUT.stl|OUT.3mf   (desktop mesh repair, no slice)\n"
-                 "       nonplanar_slice_tool --simplify-mesh IN OUT.stl|OUT.3mf [--ratio R | --triangles N] [--max-error E]   (QEM, no slice)\n"
-                 "       nonplanar_slice_tool --dump-options FILE | --dump-presets VENDOR FILE [--profiles DIR]\n"
-                 "       (--dump-presets filament entries carry filament_id and setting_id)\n"
-                 "       nonplanar_slice_tool --load-gcode FILE.gcode   (times the preview's G-code load)\n";
-    std::exit(2);
+    std::ostream& help_text = error.empty() ? std::cout : std::cerr;
+    if (!error.empty())
+        help_text << "error: " << error << "\n";
+    help_text
+        << "usage: nonplanar_slice_tool --printer NAME --process NAME --filament NAME [--vendor Prusa]\n"
+           "       --detect-regions OUT.json MODEL [--printer NAME --vendor VENDOR] (no slicing)\n"
+           "       --plan-tops OUT.json: with the print arguments and no -o, the curved tops plan per detected region\n"
+           "       [--profiles DIR] [--datadir DIR] [--bed-type NAME] [--set key=value]... [--center X,Y]\n"
+           "       [--config-out FILE] [--project-out FILE] [--head-out FILE] [--gcode-3mf FILE] [--json FILE]\n"
+           "       [--field-file FIELD.npz] [--dump-field FIELD.npz]\n"
+           "       [--atom TOOLPATH] [--verify] [--explain] [--auto-orient | --orient-only | --orient-scores] [--floating] [--save-3mf "
+           "PROJECT.3mf]\n"
+           "       [--plate-index N] [--layer-profile adaptive:QUALITY | ramp:H_BOTTOM:H_TOP | range:DEPTH:H | file:PATH] [--calib-head "
+           "ID]\n"
+           "       -o OUT.gcode (MODEL | PROJECT.3mf | --plate PLATE.json | --project SPEC.json | --calib TEST)\n"
+           "       [--moves-out FILE [--moves-extended]] [--progress] [--calib-params key=value,...] [--preset-cache DIR]\n"
+           "       [--stage-cache DIR [--stage-cache-max-mb N]]\n"
+           "       (plate JSON objects take \"plate\": N; a plate JSON of several plates slices with --plate-index N)\n"
+           "       (plate JSON objects and volumes take \"paint\"; plate JSON objects take \"layer_height_profile\")\n"
+           "       (plate JSON volumes take \"type\": \"seam\" and \"seam_mode\": center|left|right|enforced|blocked|neutral)\n"
+           "       (plate JSON objects take \"ranges\")\n"
+           "       (plate JSON objects take \"brim_ears\": [{\"x\": X, \"y\": Y, \"radius\": R}])\n"
+           "       (plate JSON plates take \"settings\" and \"locked\"; --save-3mf preserves per-plate settings and locks)\n"
+           "       [--surface-grid [--surface-grid-max-cells N]]   (with --json: per-cell top surface error)\n"
+           "       [--force-planar]   (nonplanar_mode off on the plate, objects, volumes and height ranges)\n"
+           "       [--allow-mixed-temperatures]\n"
+           "       [--printer-filament-context FILE]   (JSON AMS capacity and loaded filaments for Auto For Match)\n"
+           "       nonplanar_slice_tool --explode-3mf IN.3mf OUTDIR   (editable plate.json and volume meshes, no slice)\n"
+           "       [--edit EDITS.json]   (a loaded PROJECT.3mf: add/delete objects and instances, set filaments; --edit takes "
+           "\"add_volume\"; --edit takes \"set_paint\")\n"
+           "       [--cut-only Z | X,Y,Z,NX,NY,NZ [--cut-keep upper|lower|both] [--cut-place-lower]]\n"
+           "       [--cut-connectors JSON]   (plug/dowel/snap, shape, pos, radius, height/depth, tolerance)\n"
+           "       [--cut-mode planar|dovetail] [--cut-dovetail JSON]\n"
+           "       [--arrange-only OUT.json [--arrange-spacing MM] [--arrange-no-rotation]]   (the desktop's arrange, no slice)\n"
+           "       [--arrange-multi-materials 0|1]   (with --arrange-only; default 1)\n"
+           "       [--wipe-tower-only OUT.json]   (with --plate: per-plate prime tower estimate, no slice)\n"
+           "       [--patch-preview FILE.json [--patch-preview-budget S] [--patch-preview-max-triangles N]]\n"
+           "       [--step-linear-deflection MM] [--step-angle-deflection A] [--step-split-compound]\n"
+           "       text surface: --use-surface --surface TARGET --at X,Y,Z --normal NX,NY,NZ [--up UX,UY,UZ] [--angle DEG] "
+           "[--surface-outside]\n"
+           "       nonplanar_slice_tool --export-3mf-generic IN.3mf OUT.3mf   (geometry only)\n"
+           "       nonplanar_slice_tool --export-drc IN OUT.drc [--bits N]   (geometry only)\n"
+           "       nonplanar_slice_tool --emboss-svg IN.svg OUT.stl|OUT.3mf --depth MM [--size MM]\n"
+           "       SVG --size scales the larger side; optional --use-surface --surface TARGET --at X,Y,Z --normal X,Y,Z [--up X,Y,Z] "
+           "[--angle DEG] [--surface-outside]\n"
+           "       nonplanar_slice_tool --emboss-fonts   (bundled font catalog as JSON)\n"
+           "       nonplanar_slice_tool --emboss-text OUT.stl|OUT.3mf --text TEXT [--font FILE | --font-name NAME] --size MM --depth MM\n"
+           "                           [--bold] [--italic] [--line-spacing FACTOR] [--char-gap N] [--align left|center|right]   (desktop "
+           "emboss, no slice)\n"
+           "       nonplanar_slice_tool --mesh-boolean union|difference|intersection --a A --b B [--b C] OUT.stl|OUT.3mf\n"
+           "       nonplanar_slice_tool --repair-mesh IN OUT.stl|OUT.3mf   (desktop mesh repair, no slice)\n"
+           "       nonplanar_slice_tool --simplify-mesh IN OUT.stl|OUT.3mf [--ratio R | --triangles N] [--max-error E]   (QEM, no slice)\n"
+           "       nonplanar_slice_tool --dump-options FILE | --dump-presets VENDOR FILE [--profiles DIR]\n"
+           "       (--dump-presets filament entries carry filament_id and setting_id)\n"
+           "       nonplanar_slice_tool --load-gcode FILE.gcode   (times the preview's G-code load)\n";
+    std::exit(error.empty() ? 0 : 2);
+}
+
+struct PrinterFilamentContext
+{
+    std::vector<std::map<int, int>> ams_counts{2};
+    std::vector<std::vector<DynamicPrintConfig>> filaments{2};
+};
+
+[[noreturn]] void invalid_printer_filament_context(const char* message)
+{
+    throw std::runtime_error(std::string("printer filament context: ") + message);
+}
+
+PrinterFilamentContext read_printer_filament_context(const std::string& path)
+{
+    using Json                   = nlohmann::json;
+    constexpr int max_slots      = 64;
+    constexpr int max_file_bytes = 64 * 1024;
+    constexpr std::array<std::string_view, 8> support_types{"PLA-S", "Sup.PLA", "PA-S", "Sup.PA", "ABS-S", "Sup.ABS", "PVA", "BVOH"};
+    boost::nowide::ifstream in(path, std::ios::binary);
+    if (!in)
+        invalid_printer_filament_context("cannot open file");
+    std::string bytes(max_file_bytes + 1, '\0');
+    in.read(bytes.data(), bytes.size());
+    if (in.bad() || in.gcount() > max_file_bytes)
+        invalid_printer_filament_context("cannot read file or file exceeds 64 KiB");
+    bytes.resize(in.gcount());
+    if (bytes.find('\0') != std::string::npos)
+        invalid_printer_filament_context("invalid JSON");
+    const Json data = Json::parse(
+        bytes,
+        [](int depth, Json::parse_event_t, Json&) {
+            if (depth > 3)
+                invalid_printer_filament_context("unexpected nested data");
+            return true;
+        },
+        false);
+    if (!data.is_object() || data.size() != 2 || !data.contains("ams_slots") || !data.contains("loaded_filaments"))
+        invalid_printer_filament_context("expected ams_slots and loaded_filaments");
+    const auto& slots  = data["ams_slots"];
+    const auto& loaded = data["loaded_filaments"];
+    if (!slots.is_array() || slots.size() != 2)
+        invalid_printer_filament_context("ams_slots must contain two capacities");
+    if (!loaded.is_array() || loaded.size() > 2 * max_slots)
+        invalid_printer_filament_context("loaded_filaments must be an array of at most 128 rows");
+
+    const auto bounded_integer = [](const Json& value, unsigned int max, const char* message) {
+        if (!value.is_number_integer() || value.get<uint64_t>() > max)
+            invalid_printer_filament_context(message);
+        return value.get<unsigned int>();
+    };
+    PrinterFilamentContext context;
+    std::array<unsigned int, 2> capacity{};
+    std::array<unsigned int, 2> ams_loaded{};
+    std::array<unsigned int, 2> external_loaded{};
+    for (size_t side = 0; side < capacity.size(); ++side) {
+        capacity[side] = bounded_integer(slots[side], max_slots, "AMS capacities must be integers from 0 to 64");
+        context.ams_counts[side].emplace(1, capacity[side]);
+    }
+    for (const auto& row : loaded) {
+        if (!row.is_object() || row.size() != 4 || !row.contains("extruder") || !row.contains("type") || !row.contains("color") ||
+            !row.contains("external"))
+            invalid_printer_filament_context("loaded filament rows must contain extruder, type, color and external");
+        const auto side = bounded_integer(row["extruder"], 1, "extruder must be 0 (left) or 1 (right)");
+        if (!row["type"].is_string() || !row["color"].is_string() || !row["external"].is_boolean())
+            invalid_printer_filament_context("type and color must be strings and external must be a boolean");
+        const std::string type = boost::algorithm::trim_copy(row["type"].get<std::string>());
+        const auto& color      = row["color"].get_ref<const std::string&>();
+        const bool external    = row["external"].get<bool>();
+        if (type.empty() || type.size() > 64 || std::any_of(type.begin(), type.end(), [](unsigned char ch) { return ch < 32 || ch == 127; }))
+            invalid_printer_filament_context("filament type must be nonempty, at most 64 bytes and free of control characters");
+        if (color.size() != 7 || color[0] != '#' ||
+            !std::all_of(color.begin() + 1, color.end(), [](unsigned char ch) { return std::isxdigit(ch); }))
+            invalid_printer_filament_context("filament color must have the format #RRGGBB");
+        if (external && ++external_loaded[side] > 1)
+            invalid_printer_filament_context("only one external filament is allowed per extruder");
+        if (!external && ++ams_loaded[side] > capacity[side])
+            invalid_printer_filament_context("loaded AMS filaments exceed the capacity for their extruder");
+
+        DynamicPrintConfig& filament = context.filaments[side].emplace_back();
+        filament.set_key_value("filament_type", new ConfigOptionStrings{type});
+        filament.set_key_value("filament_colour", new ConfigOptionStrings{color});
+        const bool is_support = std::find(support_types.begin(), support_types.end(), type) != support_types.end();
+        filament.set_key_value("filament_is_support", new ConfigOptionBools{is_support});
+        filament.set_key_value("tray_name", new ConfigOptionStrings{external ? "Ext" : "AMS"});
+    }
+    return context;
 }
 
 std::optional<CalibMode> classic_calib_mode(const std::string &kind);
@@ -529,6 +629,8 @@ Args parse_args(int argc, char **argv)
         else if (arg == "--edit") a.edit = next();
         else if (arg == "--force-planar") a.force_planar = true;
         else if (arg == "--allow-mixed-temperatures") a.allow_mixed_temperatures = true;
+        else if (arg == "--printer-filament-context")
+            a.printer_filament_context = next();
         else if (arg == "--surface-grid") a.surface_grid = true;
         else if (arg == "--surface-grid-max-cells") {
             const long n = std::atol(next().c_str());
@@ -915,22 +1017,13 @@ std::string vendor_json_value(const std::vector<fs::path> &dirs, std::string nam
 void write_gcode_3mf(const Args &args, Model &model, Print &print, DynamicPrintConfig &config, GCodeProcessorResult &result,
                      const PlateData *source_plate)
 {
-    auto plate                     = source_plate ? std::make_unique<PlateData>(*source_plate) : std::make_unique<PlateData>();
+    auto plate = source_plate ? std::make_unique<PlateData>(*source_plate) : std::make_unique<PlateData>();
     plate->objects_and_instances.clear();
-    if (!source_plate)
-        plate->config.apply_only(config, {"filament_map_mode", "filament_map", "filament_volume_map"});
-    else if (!plate->config.has("filament_map_mode"))
-        plate->config.apply_only(config, {"filament_map_mode"});
-    if (const auto *mode = plate->config.option<ConfigOptionEnum<FilamentMapMode>>("filament_map_mode"); mode && is_auto_filament_map_mode(mode->value)) {
-        plate->config.option<ConfigOptionInts>("filament_map", true)->values        = print.get_filament_maps();
-        plate->config.option<ConfigOptionInts>("filament_volume_map", true)->values = print.get_filament_volume_maps();
-    }
-    if (const auto *map = plate->config.option<ConfigOptionInts>("filament_map")) {
-        plate->filament_maps = map->values;
-        config.option<ConfigOptionInts>("filament_map", true)->values = map->values;
-    }
-    if (const auto *volumes = plate->config.option<ConfigOptionInts>("filament_volume_map"))
-        config.option<ConfigOptionInts>("filament_volume_map", true)->values = volumes->values;
+    const t_config_option_keys mapping_keys = {"filament_map_mode", "filament_map", "filament_volume_map", "filament_nozzle_map",
+                                               "filament_map_2"};
+    plate->config.apply_only(print.config(), mapping_keys);
+    config.apply_only(print.config(), mapping_keys);
+    plate->filament_maps           = print.get_filament_maps();
     plate->plate_index             = 0;
     for (size_t i = 0; i < model.objects.size(); ++i)
         for (size_t j = 0; j < model.objects[i]->instances.size(); ++j)
@@ -3261,6 +3354,8 @@ void explode_3mf(const Args &args)
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--help")
+        usage();
     if (argc == 3 && std::string(argv[1]) == "--load-gcode") {
         const auto     t0 = std::chrono::steady_clock::now();
         const double   c0 = process_cpu_seconds();
@@ -3283,7 +3378,7 @@ int main(int argc, char **argv)
         }
 #endif
     const Args args = parse_args(argc, argv);
-    if (!args.stage_cache.empty())
+    if (!args.stage_cache.empty() && !args.printer_filament_context)
         Slic3r::Nonplanar::set_stage_cache(args.stage_cache, args.stage_cache_max_mb << 20);
     nlohmann::json record;
     if (const char *level = std::getenv("NP_LOG_LEVEL"))
@@ -3293,6 +3388,9 @@ int main(int argc, char **argv)
         if (!args.dump_options.empty() && args.dump_presets.empty()) return 0;
         if (args.orient_scores) { print_stock_orient_scores(args); return 0; }
         if (! args.json.empty()) slice_json_record(record, args);
+        std::optional<PrinterFilamentContext> filament_context;
+        if (args.printer_filament_context)
+            filament_context.emplace(read_printer_filament_context(*args.printer_filament_context));
         auto progress = [&args](const char *stage, int percent) {
             if (args.progress) std::cout << "progress " << stage << " " << percent << std::endl;
         };
@@ -3651,6 +3749,16 @@ int main(int argc, char **argv)
         if (classic_params)
             print.set_calib_params(*classic_params);
         print.is_BBL_printer() = config.opt_string("printer_model").rfind("Bambu Lab", 0) == 0;
+        const bool dual_bambu  = print.is_BBL_printer() && config.option<ConfigOptionFloats>("nozzle_diameter")->size() == 2;
+        if (config.opt_enum<FilamentMapMode>("filament_map_mode") == fmmAutoForMatch && (dual_bambu || filament_context)) {
+            if (!dual_bambu)
+                invalid_printer_filament_context("Auto For Match requires a dual-extruder Bambu Lab printer");
+            if (!filament_context || (filament_context->filaments[0].empty() && filament_context->filaments[1].empty()))
+                invalid_printer_filament_context("Auto For Match requires --printer-filament-context FILE with loaded filaments");
+            config.option<ConfigOptionStrings>("extruder_ams_count", true)->values = save_extruder_ams_count_to_string(
+                filament_context->ams_counts);
+            print.set_extruder_filament_info(filament_context->filaments);
+        }
         for (ModelObject *object : model.objects)
             print.auto_assign_extruders(object);
         print.apply(model, config);
