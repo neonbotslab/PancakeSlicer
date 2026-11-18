@@ -512,6 +512,25 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "output must be gcode, gcode.3mf or 3mf")
 		return
 	}
+	if values, supplied := r.MultipartForm.Value["printer_filament_context"]; supplied {
+		if !s.cfg.Features.PrinterFilamentContext {
+			fail(w, 400, "Matching loaded filament requires a slicing engine with --printer-filament-context support.")
+			return
+		}
+		if r.FormValue("operation") != "" || r.FormValue("calib") != "" || req.Output == "3mf" {
+			fail(w, 400, "printer_filament_context is only available when slicing")
+			return
+		}
+		if len(values) != 1 {
+			fail(w, 400, "Supply a single printer_filament_context for the slice.")
+			return
+		}
+		req.PrinterFilamentContext, err = parsePrinterFilamentContext(values[0])
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+	}
 	vendor, problem := s.resolveJobProfiles(&req)
 	if problem != nil {
 		problem.write(w)
@@ -839,6 +858,12 @@ func (s *Server) startJob(w http.ResponseWriter, j *Job, req JobRequest, started
 	if problem := s.validateJobMethods(j, req, vendor); problem != nil {
 		writeJSON(w, 409, problem)
 		return
+	}
+	if req.PrinterFilamentContext != nil {
+		if err := req.PrinterFilamentContext.write(filepath.Join(j.Dir, "input")); err != nil {
+			fail(w, 500, "Couldn't save the printer filament context for this slice.")
+			return
+		}
 	}
 	if err := s.captureSubmission(j, &req, vendor); err != nil {
 		fail(w, 500, "Oops! Couldn't save the print settings for this job. Please try slicing again.")
@@ -1359,6 +1384,10 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request) {
 	defer func() { finish(accepted) }()
 	parent := s.job(w, r)
 	if parent == nil {
+		return
+	}
+	if parent.Request.PrinterFilamentContext != nil && !s.cfg.Features.PrinterFilamentContext {
+		fail(w, 400, "Matching loaded filament requires a slicing engine with --printer-filament-context support.")
 		return
 	}
 	j, err := s.jobs.Retry(parent, s.clientIP(r))

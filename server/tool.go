@@ -67,6 +67,8 @@ type ToolFeatures struct {
 	StageCache           bool            `json:"stage_cache"`
 	BrimEars             bool            `json:"brim_ears"`
 	SeamParts            bool            `json:"seam_parts"`
+
+	PrinterFilamentContext bool `json:"printer_filament_context"`
 }
 
 type toolOption struct {
@@ -130,6 +132,7 @@ func probeUsage(c Config, f *ToolFeatures) {
 	f.Ranges = strings.Contains(usage, `plate JSON objects take "ranges"`)
 	f.MovesExtended = strings.Contains(usage, "--moves-extended")
 	f.MixedTemperatures = strings.Contains(usage, "--allow-mixed-temperatures")
+	f.PrinterFilamentContext = strings.Contains(usage, "--printer-filament-context FILE")
 	f.ArrangeMaterials = strings.Contains(usage, "--arrange-multi-materials")
 	f.WipeTower = strings.Contains(usage, "--wipe-tower-only")
 	f.Explode = strings.Contains(usage, "--explode-3mf IN.3mf OUTDIR")

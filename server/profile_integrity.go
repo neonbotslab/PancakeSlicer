@@ -163,7 +163,7 @@ func (s *Server) captureSubmission(j *Job, req *JobRequest, vendor *VendorPreset
 			}
 		}
 	}
-	for _, name := range []string{"plate.json", "edits.json"} {
+	for _, name := range []string{"plate.json", "edits.json", printerFilamentContextFile} {
 		path := filepath.Join(j.Dir, "input", name)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			continue

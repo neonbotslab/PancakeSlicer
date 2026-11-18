@@ -37,6 +37,7 @@ type JobRequest struct {
 	WipeTower              bool             `json:"wipe_tower,omitempty"`
 	Explode                bool             `json:"explode,omitempty"`
 	AllowMixedTemperatures bool             `json:"allow_mixed_temperatures,omitempty"`
+	PrinterFilamentContext *filamentContext `json:"printer_filament_context,omitempty"`
 	Cut                    string           `json:"cut,omitempty"`
 	CutKeep                string           `json:"cut_keep,omitempty"`
 	CutPlaceLower          bool             `json:"cut_place_lower,omitempty"`
@@ -677,6 +678,9 @@ func (m *JobManager) toolArgs(j *Job) []string {
 		args = append(args, "--preset-cache", dir)
 	}
 	args = append(args, stageCacheArgs(m)...)
+	if r.PrinterFilamentContext != nil {
+		args = append(args, "--printer-filament-context", filepath.Join(in, printerFilamentContextFile))
+	}
 	for _, f := range r.Filaments {
 		args = append(args, "--filament", f)
 	}
@@ -1204,6 +1208,9 @@ func (m *JobManager) Retry(parent *Job, client string) (*Job, error) {
 	}
 	if parent.Request.Edits {
 		required = append(required, "edits.json")
+	}
+	if parent.Request.PrinterFilamentContext != nil {
+		required = append(required, printerFilamentContextFile)
 	}
 	for _, name := range required {
 		info, err := os.Stat(filepath.Join(parent.Dir, "input", name))
