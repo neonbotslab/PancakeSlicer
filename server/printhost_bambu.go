@@ -78,7 +78,7 @@ func sendBambu(ctx context.Context, u *upload) (string, error) {
 		return u.placed() + ".", nil
 	}
 	u.starting()
-	return mqttProjectFile(ctx, p, u, plate, md5sum, fileURL)
+	return mqttProjectFile(ctx, u, plate, md5sum, fileURL)
 }
 
 var plateEntry = regexp.MustCompile(`^Metadata/plate_[0-9]+\.gcode$`)
@@ -457,20 +457,7 @@ func refusedForAuth(result, reason string, code int) bool {
 	return !strings.EqualFold(result, "success") && (strings.Contains(strings.ToLower(reason), "verif") || code == 84033543)
 }
 
-func mqttProjectFile(ctx context.Context, p *PrinterConfig, u *upload, plate, md5sum, fileURL string) (string, error) {
-	fail := func(err error) (string, error) {
-		if cause := context.Cause(ctx); cause != nil {
-			err = cause
-		}
-		return "", fmt.Errorf("%s, but the printer couldn't start the print automatically: %w", u.placed(), err)
-	}
-	conn, r, err := mqttSession(ctx, p, u.secret)
-	if err != nil {
-		return fail(err)
-	}
-	defer conn.Close()
-	sequence := strconv.FormatInt(time.Now().UnixMilli()%1_000_000_000, 10)
-	name := strings.TrimSuffix(u.filename, ".gcode.3mf")
+func (u *upload) bambuProjectFileMessage(sequence, plate, md5sum, fileURL string) (map[string]any, error) {
 	mapping := []int{}
 	if u.options.amsMapping != nil {
 		mapping = u.options.amsMapping
@@ -479,17 +466,44 @@ func mqttProjectFile(ctx context.Context, p *PrinterConfig, u *upload, plate, md
 	}
 	legacyMapping, addresses, err := bambuMapping(mapping, u.options.amsMapping2, len(mapping))
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
-	if err := mqttPublish(conn, p, map[string]any{"print": map[string]any{
+	flowCali := u.options.flowCali
+	if flowCali == flowCalibrationAuto && !u.printer.supportsAutoFlowCalibration() {
+		flowCali = flowCalibrationOn
+	}
+	return map[string]any{"print": map[string]any{
 		"sequence_id": sequence, "command": "project_file", "param": plate,
-		"project_id": "0", "profile_id": "0", "task_id": "0", "subtask_id": "0", "subtask_name": name,
+		"project_id": "0", "profile_id": "0", "task_id": "0", "subtask_id": "0", "subtask_name": strings.TrimSuffix(u.filename, ".gcode.3mf"),
 		"file": u.filename, "url": fileURL, "md5": md5sum,
-		"timelapse": u.options.timelapse, "bed_type": "auto", "bed_leveling": u.options.bedLeveling, "flow_cali": u.options.flowCali,
+		"timelapse": u.options.timelapse, "bed_type": "auto", "bed_leveling": u.options.bedLeveling,
+		"flow_cali": flowCali == flowCalibrationOn, "extrude_cali_flag": flowCali,
 		"vibration_cali": u.options.vibrationCali, "layer_inspect": false, "use_ams": u.options.useAMS, "ams_mapping": legacyMapping, "ams_mapping2": addresses,
-	}}); err != nil {
+	}}, nil
+}
+
+func mqttProjectFile(ctx context.Context, u *upload, plate, md5sum, fileURL string) (string, error) {
+	fail := func(err error) (string, error) {
+		if cause := context.Cause(ctx); cause != nil {
+			err = cause
+		}
+		return "", fmt.Errorf("%s, but the printer couldn't start the print automatically: %w", u.placed(), err)
+	}
+	p := u.printer
+	conn, r, err := mqttSession(ctx, p, u.secret)
+	if err != nil {
 		return fail(err)
 	}
+	defer conn.Close()
+	sequence := strconv.FormatInt(time.Now().UnixMilli()%1_000_000_000, 10)
+	message, err := u.bambuProjectFileMessage(sequence, plate, md5sum, fileURL)
+	if err != nil {
+		return fail(err)
+	}
+	if err := mqttPublish(conn, p, message); err != nil {
+		return fail(err)
+	}
+	name := strings.TrimSuffix(u.filename, ".gcode.3mf")
 	conn.SetDeadline(time.Now().Add(20 * time.Second))
 	for {
 		kind, body, err := mqttRead(r)
@@ -682,7 +696,7 @@ func testBambu(ctx context.Context, p *PrinterConfig, secret string) PrinterTest
 	}
 	mqttWrite(conn, 0xE0, nil)
 	if model == "" || model == "?" {
-		model = bambuModel("", p.Serial[:3])
+		model = bambuSerialModel(p.Serial)
 	}
 	host, err := p.resolvedHost(ctx)
 	if err != nil {
@@ -712,10 +726,28 @@ func bambuModel(product, code string) string {
 	if product != "" {
 		return strings.TrimPrefix(product, "Bambu Lab ")
 	}
-	return map[string]string{
-		"N1": "A1 mini", "N2S": "A1", "C11": "P1P", "C12": "P1S", "C13": "X1E", "BL-P001": "X1 Carbon", "BL-P002": "X1", "O1D": "H2D",
-		"030": "A1 mini", "039": "A1", "01S": "P1P", "01P": "P1S", "00M": "X1 Carbon", "00W": "X1", "03W": "X1E", "094": "H2D",
-	}[code]
+	if model := bambuAutoFlowModels[strings.ToLower(code)]; model != "" {
+		return model
+	}
+	if model := bambuLegacyProjectModels[code]; model != "" {
+		return model
+	}
+	return bambuSerialModels[code]
+}
+
+var bambuLegacyProjectModels = map[string]string{
+	"N1": "A1 mini", "N2S": "A1", "C11": "P1P", "C12": "P1S", "C13": "X1E", "BL-P001": "X1 Carbon", "BL-P002": "X1",
+}
+
+var bambuSerialModels = map[string]string{
+	"030": "A1 mini", "039": "A1", "01S": "P1P", "01P": "P1S", "00M": "X1 Carbon", "00W": "X1", "03W": "X1E", "094": "H2D",
+}
+
+func bambuSerialModel(serial string) string {
+	if len(serial) < 3 {
+		return ""
+	}
+	return bambuSerialModels[strings.ToUpper(serial[:3])]
 }
 
 type AMSTray struct {

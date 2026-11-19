@@ -53,24 +53,26 @@ var connectionKinds = map[string]string{
 }
 
 type ConnectionView struct {
-	Printer   string `json:"printer"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Host      string `json:"host,omitempty"`
-	Serial    string `json:"serial,omitempty"`
-	Model     string `json:"model,omitempty"`
-	URL       string `json:"url,omitempty"`
-	Auth      string `json:"auth,omitempty"`
-	Username  string `json:"username,omitempty"`
-	HasSecret bool   `json:"has_secret"`
-	Trust     string `json:"trust,omitempty"`
+	Printer             string `json:"printer"`
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	Kind                string `json:"kind"`
+	Host                string `json:"host,omitempty"`
+	Serial              string `json:"serial,omitempty"`
+	Model               string `json:"model,omitempty"`
+	AutoFlowCalibration bool   `json:"auto_flow_calibration,omitempty"`
+	URL                 string `json:"url,omitempty"`
+	Auth                string `json:"auth,omitempty"`
+	Username            string `json:"username,omitempty"`
+	HasSecret           bool   `json:"has_secret"`
+	Trust               string `json:"trust,omitempty"`
 }
 
 func (p *PrinterConfig) view() ConnectionView {
 	_, err := os.Stat(p.CredentialFile)
 	return ConnectionView{Printer: p.Printer, ID: p.id, Name: p.Name, Kind: p.Kind, Host: p.Host, Serial: p.Serial, Model: p.model,
-		URL: p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS}
+		AutoFlowCalibration: p.supportsAutoFlowCalibration(),
+		URL:                 p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS}
 }
 
 var bambuSerial = regexp.MustCompile(`^[A-Za-z0-9]{6,32}$`)
@@ -492,6 +494,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		Filename      string             `json:"filename"`
 		BedLeveling   *bool              `json:"bed_leveling"`
 		FlowCali      bool               `json:"flow_cali"`
+		FlowCaliMode  json.RawMessage    `json:"flow_cali_mode"`
 		Timelapse     bool               `json:"timelapse"`
 		VibrationCali *bool              `json:"vibration_cali"`
 		UseAMS        bool               `json:"use_ams"`
@@ -505,6 +508,11 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if json.Unmarshal(raw, &body) != nil || body.Printer == "" {
 		fail(w, 400, `expected {"printer": printer setup key, "start": boolean}`)
+		return
+	}
+	flowCali, err := parseFlowCalibrationMode(body.FlowCaliMode, body.FlowCali)
+	if err != nil {
+		fail(w, 400, err.Error())
 		return
 	}
 	p := s.sends.printer(body.Printer)
@@ -601,7 +609,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	m.history.record(view)
 	m.hub.changed()
 	audit(map[string]any{"event": "send_accepted", "job_id": j.ID, "printer": p.Printer, "kind": p.Kind, "client": client, "start_print": start, "bytes": st.Size()})
-	options := bambuOptions{bedLeveling: body.BedLeveling == nil || *body.BedLeveling, flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, useAMS: body.UseAMS, amsMapping: body.AMSMapping, amsMapping2: body.AMSMapping2}
+	options := bambuOptions{bedLeveling: body.BedLeveling == nil || *body.BedLeveling, flowCali: flowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, useAMS: body.UseAMS, amsMapping: body.AMSMapping, amsMapping2: body.AMSMapping2}
 	if body.AMSMapping != nil {
 		options.useAMS = false
 		for _, t := range body.AMSMapping {
@@ -646,9 +654,10 @@ func (u *upload) placed() string {
 }
 
 type bambuOptions struct {
-	bedLeveling, flowCali, timelapse, vibrationCali, useAMS bool
-	amsMapping                                              []int
-	amsMapping2                                             []bambuTrayAddress
+	bedLeveling, timelapse, vibrationCali, useAMS bool
+	flowCali                                      flowCalibrationMode
+	amsMapping                                    []int
+	amsMapping2                                   []bambuTrayAddress
 }
 
 func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j *Job, t *Transfer, p *PrinterConfig, f *os.File, client string, options bambuOptions, resend bool) {

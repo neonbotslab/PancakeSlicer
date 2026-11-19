@@ -301,8 +301,8 @@ func cameraSources(ctx context.Context, p *PrinterConfig) ([]cameraSource, error
 	if p.Kind == "bambu-lan" {
 		format := "mjpeg"
 		model := strings.ToUpper(p.model)
-		if model == "" && len(p.Serial) >= 3 {
-			model = strings.ToUpper(bambuModel("", p.Serial[:3]))
+		if model == "" {
+			model = strings.ToUpper(bambuSerialModel(p.Serial))
 		}
 		switch {
 		case strings.Contains(model, "A1"), strings.Contains(model, "P1"):

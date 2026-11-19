@@ -89,7 +89,9 @@ func discover(ctx context.Context, policy *hostPolicy, resources string) ([]Disc
 	for _, d := range found {
 		list = append(list, d)
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Kind+list[i].Host+list[i].URL < list[j].Kind+list[j].Host+list[j].URL })
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Kind+list[i].Host+list[i].URL < list[j].Kind+list[j].Host+list[j].URL
+	})
 	return list, notes
 }
 
@@ -426,7 +428,7 @@ func probeBambu(ctx context.Context, ip netip.Addr, roots *x509.CertPool, models
 	}
 	conn.Close()
 	serial := strings.ToUpper(leaf.Subject.CommonName)
-	d := DiscoveredPrinter{Kind: "bambu-lan", Host: ip.String(), Serial: serial, Model: bambuModel("", serial[:3]), Source: "probe"}
+	d := DiscoveredPrinter{Kind: "bambu-lan", Host: ip.String(), Serial: serial, Model: bambuSerialModel(serial), Source: "probe"}
 	for _, m := range models {
 		if m[0] == "Bambu Lab "+d.Model {
 			d.Preset = m[1]
