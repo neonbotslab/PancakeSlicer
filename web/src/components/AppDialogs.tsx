@@ -1,4 +1,5 @@
-import { savePreferences } from '../saved-preferences';
+import { savePreferences, usePreference } from '../saved-preferences';
+import { AFTER_SLICE_PREFERENCE, afterSlicePreference, type AfterSliceAction } from '../after-slice';
 import { preloadable } from '../preloadable';
 import { Check } from './Check';
 import { Suspense, useState, useSyncExternalStore } from 'react';
@@ -25,6 +26,7 @@ const close = () => setState({ appDialog: null });
 const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Cmd' : 'Ctrl';
 
 const THEMES: [ThemePref, string][] = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
+const AFTER_SLICE_ACTIONS: [AfterSliceAction, string][] = [['export', 'Export'], ['send', 'Send to printer']];
 
 function setDeveloperMode(developerMode: boolean) {
   savePreferences({'orca.developer_mode':developerMode ? '1' : '0'});
@@ -42,6 +44,9 @@ function Preferences() {
   const developerMode = useStore((s) => s.developerMode);
   const mixed = useStore((s) => s.mixedTemperatures);
   const canMix = useStore((s) => !!s.features.mixed_temperatures);
+  const afterSlice = afterSlicePreference(usePreference(AFTER_SLICE_PREFERENCE));
+  const hasConfiguredPrinter = useStore((s) => s.printerConnections.connections.length > 0);
+  const afterSliceNote = afterSlice === 'send' && !hasConfiguredPrinter;
   const notifications = useSyncExternalStore(subscribeNotificationSettings, notificationSettingsSnapshot);
   const notificationNote = notifications.permission === 'denied'
     ? 'Blocked by your browser. Allow notifications for this site from the address bar.'
@@ -61,6 +66,13 @@ function Preferences() {
             onChange={(e) => { const v = Number(e.target.value); if (v >= 0.05 && v <= 2) setCameraPrefs({ orbitMult: v }); }} /></label>
         <label className="modal-check"><Check checked={camera.zoomToMouse} onCheckedChange={(next) => setCameraPrefs({ zoomToMouse: next })} />Zoom to mouse position</label>
         <label className="modal-check"><Check checked={camera.reverseZoom} onCheckedChange={(next) => setCameraPrefs({ reverseZoom: next })} />Reverse zoom direction</label>
+        <h3 className="modal-group">Defaults</h3>
+        <div className="after-slice-setting">
+          <div className="form-row"><span>After slicing</span>
+            <span className="seg" role="radiogroup" aria-label="After slicing" aria-describedby={afterSliceNote ? 'after-slice-note' : undefined}>{AFTER_SLICE_ACTIONS.map(([value, label]) =>
+              <button key={value} type="button" role="radio" aria-checked={afterSlice === value} onClick={() => savePreferences({ [AFTER_SLICE_PREFERENCE]: value })}>{label}</button>)}</span></div>
+          {afterSliceNote && <p id="after-slice-note" className="notification-setting-note after-slice-note">No printer set up yet, so Export stays primary.</p>}
+        </div>
         <h3 className="modal-group">Notifications</h3>
         <div className="notification-setting">
           <label className="modal-check">

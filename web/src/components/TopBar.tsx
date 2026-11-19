@@ -35,6 +35,8 @@ import { PrintingChip } from '../printers/PrintingChip';
 import { sliceAndCompare } from '../compare';
 import { sliceAllMethods, useMethods } from '../methods';
 import { settingsChangedSinceSlice } from '../compare-settings';
+import { AFTER_SLICE_PREFERENCE, outputActions } from '../after-slice';
+import { usePreference } from '../saved-preferences';
 
 type MenuItem = MenuEntry;
 function Menu({title, items}: {title: string; items: MenuItem[]}) { return <MenuButton label={title} items={items} className="menu-title" />; }
@@ -205,14 +207,17 @@ export function TabBar() {
   const exportLabel = useStore(outputKind) === 'gcode.3mf' ? 'Export sliced file' : 'Export G-code';
   const printer = useStore(printerReady);
   const hasPrinters = useStore((s) => s.printerConnections.enabled);
+  const configuredPrinters = useStore((s) => s.printerConnections.connections.length);
+  const afterSlice = usePreference(AFTER_SLICE_PREFERENCE);
   const plates = useStore((s) => s.projectPlates.length > 1);
   const saved = useProject((p) => p.value === 'editing' || p.value === 'saved' || p.value === 'saving');
   const [sliceMode, setSliceMode] = useState('Slice plate');
   const [exportMode, setExportMode] = useState('plate');
   const exportAllEnabled = useStore((s) => s.projectPlates.length > 1 && !busy && exportablePlates(s).length > 0);
   const tier = useTier(), wide = tier === 'wide', coarse = window.matchMedia('(pointer: coarse)').matches, folded = tier === 'narrow' || tier === 'phone' || (tier === 'medium' && coarse);
-  const ready = job.state === 'done' && !job.stale && exportEnabled && !folded;
-  const sliceClass = `${ready ? 'btn' : 'btn-primary'} slant${busy ? ' slicing' : ''}`, exportClass = `${ready ? 'btn-primary' : 'btn'} slant`;
+  const ready = job.state === 'done' && !job.stale && exportEnabled;
+  const output = outputActions({ preference: afterSlice, configuredPrinters, sendAvailable: !!hasPrinters, ready, layout: wide ? 'wide' : folded ? 'folded' : 'compact' });
+  const sliceClass = `${ready ? 'btn' : 'btn-primary'} slant${busy ? ' slicing' : ''}`, exportClass = `${output.primary === 'export' ? 'btn-primary' : 'btn'} slant`;
   const progress = busy ? { '--p': `${Math.round(job.pct)}%` } as CSSProperties : undefined;
   const allSlice = wide && plates && sliceMode === 'Slice all';
   const methods = useMethods(), changed = useStore(settingsChangedSinceSlice) && !methods;
@@ -220,15 +225,16 @@ export function TabBar() {
   const sliceMethods: MenuEntry = {label: 'Slice all methods', action: () => void sliceAllMethods(), disabled: !hasObjects || !printer || busy || !!outside};
   const allExport = wide && plates && exportMode === 'all';
   const more: MenuEntry[] = [
+    ...(folded && ready ? [{label: tier === 'phone' ? 'Slice' : 'Slice plate', action: () => void slice(), disabled: !hasObjects || !printer || busy || !!outside}] : []),
     ...(folded ? [sliceMethods] : []),
     ...(folded && changed ? [{label: 'Slice and compare', action: compareSlice, disabled: !printer || busy || !!outside, tip: 'Slice with your updated settings and compare side by side with the previous slice'}] : []),
-    ...(folded ? [{label: exportLabel, action: download, disabled: !exportEnabled, tip: job.stale ? STALE_RESULT_TIP : 'Slice the plate first'}] : []),
-    ...(!wide && hasPrinters ? [{label: 'Send to printer', action: () => setState({appDialog: 'send'}), disabled: !exportEnabled}] : []),
+    ...(output.menu.includes('export') ? [{label: exportLabel, action: download, disabled: !exportEnabled, tip: job.stale ? STALE_RESULT_TIP : 'Slice the plate first'}] : []),
+    ...(output.menu.includes('send') ? [{label: 'Send to printer', action: () => setState({appDialog: 'send'}), disabled: !exportEnabled}] : []),
     ...(tier === 'phone' && saved ? [{label: 'Version history', action: toggleHistory} satisfies MenuEntry] : []),
     ...(!wide && plates ? [{label: 'Slice all plates', action: () => void sliceAll(), disabled: !printer || busy}, {label: 'Export all plates', action: () => void exportAll(), disabled: !exportAllEnabled}] : []),
   ];
   return (
-    <div className="tabbar">
+    <div className={`tabbar${folded && ready ? ' output-ready' : ''}`}>
       <div className="seg slant-seg view-switch" role="group" aria-label="View">
         <button type="button" aria-label="Prepare" aria-pressed={tab === 'prepare'} className="view-tab" onClick={() => setState({ tab: 'prepare' })}>
           <span>Prepare</span>
@@ -243,28 +249,28 @@ export function TabBar() {
       <div className="title-zone"><ProjectTitle/></div>
       <div className="tabbar-actions">
         <PrintingChip/>
-        {allSlice ? (
+        {(!folded || !ready) && (allSlice ? (
           <button className={sliceClass} style={progress} disabled={!printer || busy} onClick={() => void sliceAll()}>Slice all</button>
         ) : (
           <button className={sliceClass} style={progress} disabled={!hasObjects || !printer || busy || !!outside} onClick={() => void slice()}>
             {tier === 'phone' ? 'Slice' : 'Slice plate'}
           </button>
-        )}
+        ))}
         {!folded && <SideOptions className={ready ? 'btn' : 'btn-primary'} options={wide && plates ? ['Slice all', 'Slice plate'] : []} value={sliceMode} onChange={setSliceMode}
           actions={[sliceMethods]} disabled={!printer || busy || (!plates && !hasObjects)} />}
         {!allSlice && !folded && changed && <button className="btn slant" disabled={!printer || busy || !!outside} onClick={compareSlice}>Slice and compare</button>}
-        {!folded && <span className="export-actions">{allExport ? (
+        {output.buttons.length > 0 && <span className="export-actions">{output.buttons.includes('export') && (allExport ? (
           <button className={exportClass} disabled={!exportAllEnabled} onClick={() => void exportAll()}>Export all sliced plates</button>
         ) : (
           <button className={exportClass} disabled={!exportEnabled} onClick={download}>
             {exportLabel}
           </button>
-        )}
+        ))}
         {wide && plates && <SideOptions options={[exportLabel, 'Export all sliced plates']} value={allExport ? 'Export all sliced plates' : exportLabel}
           onChange={(v) => setExportMode(v === 'Export all sliced plates' ? 'all' : 'plate')} />}
-        {wide && hasPrinters && (
-          <button className="btn slant" disabled={!exportEnabled} onClick={() => setState({ appDialog: 'send' })}>
-            Send
+        {output.buttons.includes('send') && (
+          <button className={`${output.primary === 'send' ? 'btn-primary' : 'btn'} slant`} disabled={!exportEnabled} onClick={() => setState({ appDialog: 'send' })}>
+            {wide ? 'Send' : 'Send to printer'}
           </button>
         )}
         </span>}

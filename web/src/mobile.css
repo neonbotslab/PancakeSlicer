@@ -198,3 +198,9 @@
 @media (prefers-reduced-motion: reduce) {
   :where(.orca-parity) .workspace-rail { transition: none; }
 }
+@media (max-width: 599px) {
+  :where(.orca-parity) .compact-topbar:has(.tabbar.output-ready) { height: calc(96px + env(safe-area-inset-top)); min-height: calc(96px + env(safe-area-inset-top)); align-items: flex-start; }
+  :where(.orca-parity) .compact-topbar .tabbar.output-ready { height: 92px; flex-wrap: wrap; align-content: flex-start; row-gap: 4px; }
+  :where(.orca-parity) .compact-topbar .tabbar.output-ready .tabbar-actions { flex-basis: 100%; justify-content: flex-end; }
+  :where(.orca-parity) .compact-topbar .tabbar.output-ready .export-actions > button { min-height: 44px; }
+}
