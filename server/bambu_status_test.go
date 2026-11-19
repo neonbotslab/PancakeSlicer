@@ -113,11 +113,11 @@ func TestBambuStatusReports(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy full push replaces previously reported state", func(t *testing.T) {
-		full := bytes.Replace(reports[3], []byte(`,"msg":0`), nil, 1)
-		status := replayBambuStatus(t, reports[0], full)
-		if len(status.Trays) != 1 || status.Trays[0].ID != 255 || status.Trays[0].Type != "PETG" || status.Trays[0].Extruder != nil || len(status.NozzleTemps) != 0 {
-			t.Errorf("legacy full report retained old inventory: %+v", status)
+	t.Run("push without msg preserves cached state", func(t *testing.T) {
+		delta := []byte(`{"print":{"command":"push_status","gcode_state":"RUNNING"}}`)
+		status := replayBambuStatus(t, reports[0], delta)
+		if status.State != "printing" || len(status.Trays) != 5 || len(status.NozzleTemps) != 2 {
+			t.Errorf("partial push did not retain inventory and apply state: %+v", status)
 		}
 	})
 
@@ -143,8 +143,14 @@ func TestBambuStatusReports(t *testing.T) {
 		if decodeBambuReport(state, reports[0]) == nil {
 			t.Fatal("could not decode the initial report")
 		}
-		if report := decodeBambuReport(state, []byte(`{"print":{"command":"push_status","msg":1,"vir_slot":[{"id":255}]}}`)); report != nil {
-			t.Fatal("accepted a numeric external slot ID")
+		partial := decodeBambuReport(state, []byte(`{"print":{"command":"push_status","msg":1,"gcode_state":"RUNNING","vir_slot":[{"id":255,"tray_type":"ABS"},{"id":"254","tray_type":"TPU","tray_color":987}]}}`))
+		if partial == nil || partial.State != "RUNNING" {
+			t.Fatal("malformed fields discarded a valid state update")
+		}
+		for _, tray := range partial.trays() {
+			if tray.ID == 255 && tray.Type != "PLA" || tray.ID == 254 && (tray.Type != "TPU" || tray.Color != "#AABBCC") {
+				t.Errorf("partial update did not isolate malformed external tray fields: %+v", tray)
+			}
 		}
 		report := decodeBambuReport(state, []byte(`{"print":{"command":"push_status","msg":1,"vir_slot":[{"id":"255","tray_type":"ASA"}]}}`))
 		if report == nil {
@@ -154,8 +160,8 @@ func TestBambuStatusReports(t *testing.T) {
 		for _, tray := range report.trays() {
 			materials[tray.ID] = tray.Type
 		}
-		if materials[255] != "ASA" || materials[254] != "PETG" {
-			t.Errorf("got external materials %q and %q, want right ASA and left PETG", materials[255], materials[254])
+		if materials[255] != "ASA" || materials[254] != "TPU" {
+			t.Errorf("got external materials %q and %q, want right ASA and left TPU", materials[255], materials[254])
 		}
 	})
 
