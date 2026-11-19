@@ -19,30 +19,31 @@ type PrinterMessage struct {
 }
 
 type PrinterStatus struct {
-	InternalStorage *bool          `json:"internal_storage,omitempty"`
-	NozzleTemps []NozzleTemp       `json:"nozzle_temps,omitempty"`
-	Job         *deviceJob         `json:"job,omitempty"`
-	StartedAt   *time.Time         `json:"started_at,omitempty"`
-	SpeedMode   *int               `json:"speed_mode,omitempty"`
-	Light       *bool              `json:"light,omitempty"`
-	Messages    []PrinterMessage   `json:"messages,omitempty"`
-	Printer     string             `json:"printer"`
-	Online      bool               `json:"online"`
-	State       string             `json:"state"`
-	Detail      string             `json:"detail,omitempty"`
-	File        string             `json:"file,omitempty"`
-	Progress    *float64           `json:"progress,omitempty"`
-	Remaining   *int               `json:"remaining_s,omitempty"`
-	Layer       *int               `json:"layer,omitempty"`
-	Layers      *int               `json:"layers,omitempty"`
-	Nozzle      *Temp              `json:"nozzle,omitempty"`
-	Bed         *Temp              `json:"bed,omitempty"`
-	Chamber     *Temp              `json:"chamber,omitempty"`
-	Nozzles     []NozzleStatus     `json:"nozzles,omitempty"`
-	Fans        map[string]float64 `json:"fans,omitempty"`
-	Controls    *BambuControls     `json:"controls,omitempty"`
-	Trays       []AMSTray          `json:"trays,omitempty"`
-	At          time.Time          `json:"at"`
+	InternalStorage *bool              `json:"internal_storage,omitempty"`
+	NozzleTemps     []NozzleTemp       `json:"nozzle_temps,omitempty"`
+	Job             *deviceJob         `json:"job,omitempty"`
+	StartedAt       *time.Time         `json:"started_at,omitempty"`
+	SpeedMode       *int               `json:"speed_mode,omitempty"`
+	Light           *bool              `json:"light,omitempty"`
+	Messages        []PrinterMessage   `json:"messages,omitempty"`
+	Printer         string             `json:"printer"`
+	Online          bool               `json:"online"`
+	State           string             `json:"state"`
+	Detail          string             `json:"detail,omitempty"`
+	File            string             `json:"file,omitempty"`
+	Progress        *float64           `json:"progress,omitempty"`
+	Remaining       *int               `json:"remaining_s,omitempty"`
+	Layer           *int               `json:"layer,omitempty"`
+	Layers          *int               `json:"layers,omitempty"`
+	Nozzle          *Temp              `json:"nozzle,omitempty"`
+	Bed             *Temp              `json:"bed,omitempty"`
+	Chamber         *Temp              `json:"chamber,omitempty"`
+	Nozzles         []NozzleStatus     `json:"nozzles,omitempty"`
+	Fans            map[string]float64 `json:"fans,omitempty"`
+	Controls        *BambuControls     `json:"controls,omitempty"`
+	Trays           []AMSTray          `json:"trays,omitempty"`
+	At              time.Time          `json:"at"`
+	LastSeen        *time.Time         `json:"last_seen,omitempty"`
 }
 
 type Temp struct {

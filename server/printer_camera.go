@@ -31,96 +31,149 @@ type cameraSource struct {
 	URL      string `json:"url"`
 	upstream string
 }
-type cameraPacket struct {
-	data []byte
-	err  error
-}
+
+const cameraIdleGrace = 3 * time.Second
+
+var errCameraConfigChanged = errors.New("printer connection changed")
+
 type cameraFeed struct {
-	cfg     *PrinterConfig
-	cancel  context.CancelFunc
-	viewers map[chan cameraPacket]bool
-	init    []byte
+	camera   cameraSource
+	cancel   context.CancelFunc
+	viewers  map[chan []byte]struct{}
+	init     []byte
+	idle     *time.Timer
+	stopping bool
+	changed  chan struct{}
 }
 type cameraHub struct {
-	mu    sync.Mutex
-	feeds map[string]*cameraFeed
+	mu        sync.Mutex
+	feeds     map[string]*cameraFeed
+	idleGrace time.Duration
+	run       func(context.Context, *PrinterConfig, cameraSource, func([]byte, bool)) error
 }
 
-func (h *cameraHub) subscribe(p *PrinterConfig, camera cameraSource) (<-chan cameraPacket, func()) {
-	key := p.Printer + "\x00" + camera.ID
+func (m *SendManager) subscribeCamera(ctx context.Context, p *PrinterConfig, camera cameraSource) (<-chan []byte, func(), error) {
+	for {
+		m.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			m.mu.Unlock()
+			return nil, nil, err
+		}
+		if m.printerLocked(p.Printer) != p {
+			m.mu.Unlock()
+			return nil, nil, errCameraConfigChanged
+		}
+		frames, leave, changed := m.cameras.subscribe(p, camera)
+		m.mu.Unlock()
+		if changed == nil {
+			return frames, leave, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+func (h *cameraHub) subscribe(p *PrinterConfig, camera cameraSource) (<-chan []byte, func(), <-chan struct{}) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	feed := h.feeds[key]
-	if feed != nil && (feed.cfg.Kind != p.Kind || feed.cfg.Host != p.Host || feed.cfg.Serial != p.Serial || feed.cfg.URL != p.URL || feed.cfg.CredentialFile != p.CredentialFile) {
-		feed.cancel()
-		for ch := range feed.viewers {
-			close(ch)
-			delete(feed.viewers, ch)
+	feed := h.feeds[p.Printer]
+	if feed != nil && (feed.stopping || !feed.matches(camera)) {
+		if len(feed.viewers) == 0 {
+			feed.stop()
 		}
-		delete(h.feeds, key)
-		feed = nil
+		return nil, nil, feed.changed
 	}
-	ch := make(chan cameraPacket, 8)
 	if feed == nil {
 		ctx, cancel := context.WithCancel(context.Background())
-		feed = &cameraFeed{cfg: p, cancel: cancel, viewers: map[chan cameraPacket]bool{}}
-		h.feeds[key] = feed
-		go func(f *cameraFeed) {
-			emit := func(data []byte, init bool) {
-				h.mu.Lock()
-				defer h.mu.Unlock()
-				if h.feeds[key] != f {
-					return
-				}
-				if init {
-					f.init = data
-				}
-				for out := range f.viewers {
-					select {
-					case out <- cameraPacket{data: data}:
-					default:
-						close(out)
-						delete(f.viewers, out)
-					}
-				}
-				if len(f.viewers) == 0 {
-					f.cancel()
-				}
-			}
-			err := runCamera(ctx, p, camera, emit)
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			if h.feeds[key] != f {
-				return
-			}
-			for out := range f.viewers {
-				select {
-				case out <- cameraPacket{err: err}:
-				default:
-				}
-				close(out)
-				delete(f.viewers, out)
-			}
-			delete(h.feeds, key)
-		}(feed)
+		feed = &cameraFeed{camera: camera, cancel: cancel, viewers: make(map[chan []byte]struct{}), changed: make(chan struct{})}
+		h.feeds[p.Printer] = feed
+		go h.stream(ctx, p, feed)
 	}
-	feed.viewers[ch] = true
+	feed.stopIdle()
+	frames := make(chan []byte, 8)
+	feed.viewers[frames] = struct{}{}
 	if len(feed.init) > 0 {
-		ch <- cameraPacket{data: feed.init}
+		frames <- feed.init
 	}
-	return ch, func() {
+	return frames, func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		if feed.viewers[ch] {
-			delete(feed.viewers, ch)
-			close(ch)
+		if _, ok := feed.viewers[frames]; ok {
+			delete(feed.viewers, frames)
+			close(frames)
+			h.scheduleIdle(feed)
 		}
-		if len(feed.viewers) == 0 {
-			feed.cancel()
-			if h.feeds[key] == feed {
-				delete(h.feeds, key)
+	}, nil
+}
+
+func (h *cameraHub) stream(ctx context.Context, p *PrinterConfig, feed *cameraFeed) {
+	h.run(ctx, p, feed.camera, func(data []byte, init bool) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if feed.stopping {
+			return
+		}
+		if init {
+			feed.init = data
+		}
+		for out := range feed.viewers {
+			select {
+			case out <- data:
+			default:
+				delete(feed.viewers, out)
+				close(out)
 			}
 		}
+		h.scheduleIdle(feed)
+	})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	feed.stop()
+	delete(h.feeds, p.Printer)
+	close(feed.changed)
+}
+
+func (h *cameraHub) scheduleIdle(feed *cameraFeed) {
+	if len(feed.viewers) != 0 || feed.idle != nil {
+		return
+	}
+	close(feed.changed)
+	feed.changed = make(chan struct{})
+	var timer *time.Timer
+	timer = time.AfterFunc(h.idleGrace, func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if feed.idle == timer {
+			feed.stop()
+		}
+	})
+	feed.idle = timer
+}
+
+func (f *cameraFeed) matches(camera cameraSource) bool {
+	return f.camera.ID == camera.ID && f.camera.Format == camera.Format && f.camera.upstream == camera.upstream
+}
+
+func (f *cameraFeed) stopIdle() {
+	if f.idle != nil {
+		f.idle.Stop()
+		f.idle = nil
+	}
+}
+
+func (f *cameraFeed) stop() {
+	if f.stopping {
+		return
+	}
+	f.stopping = true
+	f.stopIdle()
+	f.cancel()
+	for out := range f.viewers {
+		delete(f.viewers, out)
+		close(out)
 	}
 }
 
@@ -171,25 +224,37 @@ func (s *Server) printerCamera(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		return
 	}
-	packets, leave := s.sends.cameras.subscribe(p, *camera)
+	joinCtx, cancelJoin := context.WithTimeout(r.Context(), 10*time.Second)
+	frames, leave, err := s.sends.subscribeCamera(joinCtx, p, *camera)
+	cancelJoin()
+	if err != nil {
+		switch {
+		case r.Context().Err() != nil:
+		case errors.Is(err, errCameraConfigChanged):
+			fail(w, 409, "This printer's connection settings were just updated elsewhere—please try again.")
+		default:
+			fail(w, 503, "Another camera stream is active for this printer—please try again.")
+		}
+		return
+	}
 	defer leave()
 	controller := http.NewResponseController(w)
 	defer controller.SetWriteDeadline(time.Time{})
 	first := true
 	for {
-		var packet cameraPacket
+		var frame []byte
 		var ok bool
 		select {
 		case <-r.Context().Done():
 			return
-		case packet, ok = <-packets:
+		case frame, ok = <-frames:
 		case <-time.After(30 * time.Second):
 			if first {
 				fail(w, 504, "Didn't receive a video frame from the camera—check your access code and make sure LAN Liveview is enabled on the printer.")
 			}
 			return
 		}
-		if !ok || packet.err != nil {
+		if !ok {
 			if first {
 				fail(w, 502, "Camera unavailable—check your camera settings, access code, and LAN Liveview toggle on the printer.")
 			}
@@ -209,11 +274,11 @@ func (s *Server) printerCamera(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if camera.Format == "mjpeg" {
-			if _, err := fmt.Fprintf(w, "--orca-camera\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(packet.data)); err != nil {
+			if _, err := fmt.Fprintf(w, "--orca-camera\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(frame)); err != nil {
 				return
 			}
 		}
-		if _, err := w.Write(packet.data); err != nil {
+		if _, err := w.Write(frame); err != nil {
 			return
 		}
 		if camera.Format == "mjpeg" {
@@ -575,14 +640,7 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 func (h *cameraHub) disconnect(printer string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for key, feed := range h.feeds {
-		if feed.cfg.Printer == printer {
-			feed.cancel()
-			for out := range feed.viewers {
-				close(out)
-				delete(feed.viewers, out)
-			}
-			delete(h.feeds, key)
-		}
+	if feed := h.feeds[printer]; feed != nil {
+		feed.stop()
 	}
 }

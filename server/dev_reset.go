@@ -37,7 +37,7 @@ func (s *Server) devReset(w http.ResponseWriter, r *http.Request) {
 	rand.Read(token[:])
 	epoch := hex.EncodeToString(token[:])
 	if err := s.resetAll(epoch); err != nil {
-		fail(w, 500, "Oops! Reset failed: " + err.Error())
+		fail(w, 500, "Oops! Reset failed: "+err.Error())
 		return
 	}
 	audit(map[string]any{"event": "dev_reset", "client": s.clientIP(r), "epoch": epoch})
@@ -68,6 +68,9 @@ func (s *Server) resetAll(epoch string) error {
 	if m := s.sends; m != nil && m.store != nil {
 		m.mu.Lock()
 		err := clearDir(m.store.dir)
+		for _, p := range m.conns {
+			m.cameras.disconnect(p.Printer)
+		}
 		m.store.printers, m.conns = nil, nil
 		m.mu.Unlock()
 		if err != nil {

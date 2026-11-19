@@ -295,29 +295,29 @@ func (p *PrinterConfig) trust(mode string, fp []byte) {
 }
 
 type Transfer struct {
-	ID       string        `json:"id"`
-	Job      string        `json:"job"`
-	Printer  string        `json:"printer"`
-	Name     string        `json:"name"`
-	Kind     string        `json:"kind"`
-	Start    bool          `json:"start"`
-	Filename string        `json:"filename"`
-	State    TransferState `json:"state"`
-	Sent     int64         `json:"sent"`
-	Total    int64         `json:"total"`
-	Message  string        `json:"message,omitempty"`
-	Error    string        `json:"error,omitempty"`
-	Outcome  string        `json:"outcome,omitempty"`
-	Reason   string        `json:"reason,omitempty"`
-	Recovery string        `json:"recovery,omitempty"`
-	JobEnd   string     `json:"job_end,omitempty"`
-	JobEndAt *time.Time `json:"job_end_at,omitempty"`
-	Running bool `json:"running,omitempty"`
+	ID        string           `json:"id"`
+	Job       string           `json:"job"`
+	Printer   string           `json:"printer"`
+	Name      string           `json:"name"`
+	Kind      string           `json:"kind"`
+	Start     bool             `json:"start"`
+	Filename  string           `json:"filename"`
+	State     TransferState    `json:"state"`
+	Sent      int64            `json:"sent"`
+	Total     int64            `json:"total"`
+	Message   string           `json:"message,omitempty"`
+	Error     string           `json:"error,omitempty"`
+	Outcome   string           `json:"outcome,omitempty"`
+	Reason    string           `json:"reason,omitempty"`
+	Recovery  string           `json:"recovery,omitempty"`
+	JobEnd    string           `json:"job_end,omitempty"`
+	JobEndAt  *time.Time       `json:"job_end_at,omitempty"`
+	Running   bool             `json:"running,omitempty"`
 	JobErrors []PrinterMessage `json:"job_errors,omitempty"`
-	Project  string     `json:"project,omitempty"`
-	Version  uint64     `json:"version,omitempty"`
-	Started  time.Time  `json:"started"`
-	Finished *time.Time `json:"finished,omitempty"`
+	Project   string           `json:"project,omitempty"`
+	Version   uint64           `json:"version,omitempty"`
+	Started   time.Time        `json:"started"`
+	Finished  *time.Time       `json:"finished,omitempty"`
 
 	sent   *atomic.Int64
 	cancel context.CancelCauseFunc
@@ -353,12 +353,12 @@ func (t *Transfer) to(next TransferState) bool {
 func (t *Transfer) active() bool { return t.State == TransferUploading || t.State == TransferStarting }
 
 type SendManager struct {
-	store *printerStore
-	mu    sync.Mutex
-	conns []*PrinterConfig
-	busy  map[string]bool
-	live  map[string]*Job
-	cards map[string]string
+	store   *printerStore
+	mu      sync.Mutex
+	conns   []*PrinterConfig
+	busy    map[string]bool
+	live    map[string]*Job
+	cards   map[string]string
 	buckets map[string]tokenBucket
 	cameras *cameraHub
 	hub     *statusHub
@@ -371,7 +371,7 @@ const sendRate = 0.1
 func NewSendManager(store *printerStore) *SendManager {
 	m := &SendManager{store: store, busy: map[string]bool{}, live: map[string]*Job{}, cards: map[string]string{}, buckets: map[string]tokenBucket{}}
 	m.hub = newStatusHub(m)
-	m.cameras = &cameraHub{feeds: map[string]*cameraFeed{}}
+	m.cameras = &cameraHub{feeds: make(map[string]*cameraFeed), idleGrace: cameraIdleGrace, run: runCamera}
 	if store != nil {
 		m.conns = store.printers
 		for _, p := range m.conns {
@@ -487,16 +487,16 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Printer       string `json:"printer"`
-		Start         *bool  `json:"start"`
-		Filename      string `json:"filename"`
-		BedLeveling   *bool  `json:"bed_leveling"`
-		FlowCali      bool   `json:"flow_cali"`
-		Timelapse     bool   `json:"timelapse"`
-		VibrationCali *bool  `json:"vibration_cali"`
-		UseAMS        bool   `json:"use_ams"`
-		AMSMapping  []int              `json:"ams_mapping"`
-		AMSMapping2 []bambuTrayAddress `json:"ams_mapping_2"`
+		Printer       string             `json:"printer"`
+		Start         *bool              `json:"start"`
+		Filename      string             `json:"filename"`
+		BedLeveling   *bool              `json:"bed_leveling"`
+		FlowCali      bool               `json:"flow_cali"`
+		Timelapse     bool               `json:"timelapse"`
+		VibrationCali *bool              `json:"vibration_cali"`
+		UseAMS        bool               `json:"use_ams"`
+		AMSMapping    []int              `json:"ams_mapping"`
+		AMSMapping2   []bambuTrayAddress `json:"ams_mapping_2"`
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
 	if err != nil {
@@ -573,7 +573,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	if m.busy[p.Printer] {
 		m.mu.Unlock()
 		f.Close()
-		fail(w, 409, p.Name + " is busy receiving another file right now—try again once that upload finishes.")
+		fail(w, 409, p.Name+" is busy receiving another file right now—try again once that upload finishes.")
 		return
 	}
 	j.mu.Lock()
@@ -623,18 +623,18 @@ const sendTimeout = 30 * time.Minute
 const sendStall = 30 * time.Second
 
 type upload struct {
-	printer  *PrinterConfig
-	secret   string
-	filename string
-	file     *os.File
-	size     int64
-	start    bool
-	progress *atomic.Int64
-	starting func()
-	stored   func()
-	options  bambuOptions
-	resend, onCard bool
-	outcome        string
+	printer         *PrinterConfig
+	secret          string
+	filename        string
+	file            *os.File
+	size            int64
+	start           bool
+	progress        *atomic.Int64
+	starting        func()
+	stored          func()
+	options         bambuOptions
+	resend, onCard  bool
+	outcome         string
 	internalStorage *bool
 }
 

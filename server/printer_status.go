@@ -23,6 +23,7 @@ type statusHub struct {
 	mu       sync.Mutex
 	subs     int
 	status   map[string]PrinterStatus
+	lastSeen map[string]*time.Time
 	monitors map[string]*monitor
 	wake     chan struct{}
 	idle     *time.Timer
@@ -38,7 +39,7 @@ const pollInterval = 2 * time.Second
 const monitorLinger = time.Minute
 
 func newStatusHub(m *SendManager) *statusHub {
-	return &statusHub{m: m, status: map[string]PrinterStatus{}, monitors: map[string]*monitor{}, wake: make(chan struct{})}
+	return &statusHub{m: m, status: map[string]PrinterStatus{}, lastSeen: map[string]*time.Time{}, monitors: map[string]*monitor{}, wake: make(chan struct{})}
 }
 
 func (h *statusHub) bump() {
@@ -81,6 +82,15 @@ func (h *statusHub) reconcile() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	watching := h.subs > 0 || h.idle != nil
+	known := make(map[string]bool, len(conns))
+	for _, p := range conns {
+		known[p.Printer] = true
+	}
+	for key := range h.lastSeen {
+		if !known[key] {
+			delete(h.lastSeen, key)
+		}
+	}
 	want := map[string]*PrinterConfig{}
 	if watching {
 		for _, p := range conns {
@@ -101,7 +111,7 @@ func (h *statusHub) reconcile() {
 			ctx, cancel := context.WithCancel(context.Background())
 			mon := &monitor{cfg: p, cancel: cancel, poke: make(chan struct{}, 1)}
 			h.monitors[key] = mon
-			h.status[key] = PrinterStatus{Printer: key, State: "connecting", At: time.Now().UTC()}
+			h.status[key] = PrinterStatus{Printer: key, State: "connecting", At: time.Now().UTC(), LastSeen: h.lastSeen[key]}
 			go h.run(ctx, mon)
 		}
 	}
@@ -118,10 +128,16 @@ func (h *statusHub) set(from *monitor, st PrinterStatus) {
 		h.mu.Unlock()
 		return
 	}
+	now := time.Now().UTC()
+	if st.Online {
+		h.lastSeen[key] = &now
+	} else {
+		st.LastSeen = h.lastSeen[key]
+	}
 	prev.At, st.At = time.Time{}, time.Time{}
 	a, _ := json.Marshal(prev)
 	b, _ := json.Marshal(st)
-	st.At = time.Now().UTC()
+	st.At = now
 	if ok && bytes.Equal(a, b) {
 		h.mu.Unlock()
 		return
