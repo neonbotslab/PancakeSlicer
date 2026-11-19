@@ -20,7 +20,7 @@ export interface PrinterStatus {
   state: 'connecting' | 'idle' | 'printing' | 'paused' | 'finished' | 'failed' | 'busy' | 'error' | 'offline';
   job?: { id: string; plate: number; sent_at: string; thumbnail?: string }; started_at?: string; speed_mode?: number; light?: boolean; messages?: { code: string; message?: string }[];
   detail?: string; file?: string; progress?: number; remaining_s?: number; layer?: number; layers?: number;
-  nozzle_temps?: (Temp & { id: number })[]; nozzle?: Temp; bed?: Temp; chamber?: Temp; nozzles?: NozzleStatus[]; fans?: Record<string, number>; trays?: Tray[]; at: string;
+  nozzle_temps?: (Temp & { id: number })[]; nozzle?: Temp; bed?: Temp; chamber?: Temp; nozzles?: NozzleStatus[]; fans?: Record<string, number>; trays?: Tray[]; at: string; last_seen?: string;
   controls?: { fans?: Record<string, { index: number; min: number; max: number; modern?: boolean }>; chamber?: { min: number; max: number } };
 }
 export interface PrinterConnections {

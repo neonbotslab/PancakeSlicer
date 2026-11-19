@@ -209,7 +209,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
           {t?.reason === 'credentials' && <button type="button" className="btn" onClick={() => { printerSend.reset(); edit(); }}>Connection settings</button>}
           <button type="button" className="btn-primary" disabled={!!blocked || !!t?.start && printBlocked} onClick={() => void send(!!t?.start)}>Retry</button>
         </> : <>
-          <button type="button" className="btn" onClick={() => { close(); openDevice(); }}>Open in Device</button>
+          <button type="button" className="btn" onClick={() => { close(); openDevice(t?.printer ?? printer); }}>Open in Device</button>
           <button type="button" className="btn-primary" onClick={close}>Done</button>
         </>}
       </ModalFooter>

@@ -11,6 +11,7 @@ import { responseError } from '../api/access';
 import { controlDevice, controlPrinter, presenceStatus, statusLine, type PrinterConnection, type PrinterStatus, type StatusTone, type Tray } from './connections';
 import { printerCapabilities, printerModel } from './capabilities';
 import { DeviceCamera } from './DeviceCamera';
+import { AllPrintersLink, DeviceLink, DeviceOverview } from './DeviceOverview';
 import { chooseSlot, matchedTrays, ruleText, slotOf, usePrinterSlots, type SlotMatch } from './slots';
 import { trayCode } from '../multinozzle/ams';
 import { Dropdown } from '../components/Dropdown';
@@ -123,7 +124,7 @@ function AllJobs({ runningId, version, collapse }: { runningId?: string; version
       <button type="button" className="link" onClick={collapse}>Show less</button><span>{pages.sends.length} of {pages.total}</span></div></>;
 }
 
-function DevicePanel({ connection, model, cover, status, live }: { connection: PrinterConnection; model: string; cover?: string; status?: PrinterStatus; live: boolean }) {
+function DevicePanel({ connection, model, cover, status, live, overview }: { connection: PrinterConnection; model: string; cover?: string; status?: PrinterStatus; live: boolean; overview: boolean }) {
   const [thumbnailFailed, failThumbnail] = useState(false);
   const [error, setError] = useState(''), [pending, setPending] = useState(false), [history, setHistory] = useState<History[]>([]), [historyError, setHistoryError] = useState('');
   const transfers = useStore((s) => s.printerConnections.transfers), [allJobs, showAllJobs] = useState(false);
@@ -181,9 +182,10 @@ function DevicePanel({ connection, model, cover, status, live }: { connection: P
         </Card>;
   const temperatures = !!(status?.nozzle || status?.nozzle_temps?.length || status?.bed || (capabilities.chamber && status?.chamber));
   return <article className="device-panel" aria-label={connection.name}>
+    {overview && <div className="device-overview-back"><AllPrintersLink /></div>}
     {error && <p role="alert" className="device-command-error">{error}</p>}
     <div className="device-layout">
-      <div className="device-left"><DeviceCamera printer={connection.printer} cover={cover} light={light} lightLabel={lightLabel} cameraLabel={capabilities.cameraLabel} busy={busy} onLight={() => void set('light', light ? 0 : 1)} />
+      <div className="device-left"><DeviceCamera printer={connection.printer} cover={cover} light={light} lightLabel={lightLabel} cameraLabel={capabilities.cameraLabel} offline={!live || !status?.online} busy={busy} onLight={() => void set('light', light ? 0 : 1)} />
         {ams}
       </div>
       <div className="device-status">
@@ -218,24 +220,45 @@ const openConnection = (printer: string) => setState({ presetUx: { kind: 'preset
 export function DeviceView() {
   const connections = useStore((s) => s.printerConnections);
   useStore((s) => s.userPresets);
-  const platePrinter = useStore((s) => s.printer);
-  const selected = useStore((s) => s.devicePrinter) ?? platePrinter;
-  const setups = listProfiles('machine').map((setup) => ({ ...setup, model: printerModel(getState(), setup.key) }));
-  const printers = connections.connections.filter((c) => c.printer && setups.some((p) => p.key === c.printer));
-  const current = printers.find((c) => c.printer === selected) ?? printers[0];
-  const shown = current && setups.find((p) => p.key === current.printer);
-  useEffect(() => { document.querySelector('.device-printer[aria-pressed=true]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [current?.printer]);
+  useStore((s) => s.printerLibrary);
+  const selected = useStore((s) => s.devicePrinter);
+  const setups = new Map(listProfiles('machine').map((setup) => [setup.key, setup]));
+  const printers = connections.connections.flatMap((connection) => {
+    if (!connection.printer) return [];
+    const setup = setups.get(connection.printer);
+    const model = (setup && printerModel(getState(), connection.printer)) || connection.model || '';
+    return [{
+      printer: connection.printer,
+      connection,
+      name: connection.name || setup?.name || connection.printer,
+      setupName: setup?.name || connection.name || connection.printer,
+      model,
+      cover: setup && printerCover(setup.vendor, setup.config, model),
+    }];
+  });
+  const current = selected === null ? printers[0] : printers.find((printer) => printer.printer === selected);
+  const overview = selected === null && printers.length > 1;
+  useEffect(() => {
+    if (!overview) document.querySelector('.device-printer[aria-current=page]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [current?.printer, overview]);
+  if (overview) return <DeviceOverview printers={printers} connections={connections} />;
+  if (selected !== null && !current) return <main className="device-view device-view-missing" aria-label="Device">
+    <div className="device-empty">
+      {connections.enabled === null ? <p role="status">Loading printer…</p> : <>
+        <h1>Printer unavailable</h1><AllPrintersLink />
+      </>}
+    </div>
+  </main>;
   return <main className="device-view" aria-label="Device">
-    <aside className="device-list" aria-label="Printers"><h2>Printers</h2><div className="device-printer-rows">{printers.map((connection) => {
-      const setup = setups.find((p) => p.key === connection.printer)!;
-      const own = connection.name && connection.name !== setup.name ? connection.name : connection.serial ? `Serial ${connection.serial.slice(-4)}` : undefined;
-      const cover = printerCover(setup.vendor, setup.config, setup.model), state = presenceStatus(connections.live, connection, connections.status[connection.printer], true);
-      return <button type="button" className="device-printer" aria-pressed={connection.printer === current?.printer} key={connection.printer} onClick={() => setState({ devicePrinter: connection.printer })}>
-        <PrinterRender cover={cover} /><span><strong>{setup.name}</strong>{own && <span className="device-printer-own">{own}</span>}<span className="status-text" data-tone={state.tone}>{state.label}</span></span>
-      </button>;
+    <aside className="device-list" aria-label="Printers"><h2>Printers</h2><div className="device-printer-rows">{printers.map(({ printer, connection, name, setupName, cover }) => {
+      const own = name !== setupName ? name : connection.serial ? `Serial ${connection.serial.slice(-4)}` : undefined;
+      const state = presenceStatus(connections.live, connection, connections.status[printer], true);
+      return <DeviceLink className="device-printer" aria-current={printer === current?.printer ? 'page' : undefined} key={printer} printer={printer}>
+        <PrinterRender cover={cover} /><span><strong>{setupName}</strong>{own && <span className="device-printer-own">{own}</span>}<span className="status-text" data-tone={state.tone}>{state.label}</span></span>
+      </DeviceLink>;
     })}{!printers.length && <p className="device-muted">No printers connected</p>}</div>
       <div className="device-list-actions">{current && <button type="button" className="btn slant" onClick={() => openConnection(current.printer)}>Connection</button>}
         <button type="button" className="btn slant device-manage" onClick={() => setState({ presetUx: { kind: 'presets', type: 'machine' } })}>Manage printers</button></div></aside>
-    {current && shown ? <DevicePanel key={current.printer} connection={{ ...current, name: shown.name }} model={shown.model || current.model || ''} cover={printerCover(shown.vendor, shown.config, shown.model)} status={connections.status[current.printer]} live={connections.live} /> : <div className="device-empty"><h1>Connect a printer</h1><p>Watch live progress and control your printer from here.</p><button type="button" className="btn-primary" onClick={() => setState({ appDialog: 'send' })}>Connect</button></div>}
+    {current ? <DevicePanel key={current.printer} connection={{ ...current.connection, name: current.setupName }} model={current.model} cover={current.cover} status={connections.status[current.printer]} live={connections.live} overview={printers.length > 1} /> : <div className="device-empty"><h1>Connect a printer</h1><p>Watch live progress and control your printer from here.</p><button type="button" className="btn-primary" onClick={() => setState({ appDialog: 'send' })}>Connect</button></div>}
   </main>;
 }

@@ -1,7 +1,7 @@
 import { randomId } from '../random-id';
 import { documentGeneration } from '../state/history';
 import { getState, setState, type JobView } from '../state/store';
-import { project, openProject } from '../flow/project';
+import { project, openProject, showDevice } from '../flow/project';
 import { plateJob, selectPlate, setPlateJob } from '../plater/plates';
 import { summarize } from '../flow/slice';
 import { spacedTime } from '../preview/format';
@@ -66,7 +66,7 @@ export function notifyExported(file: string, projectId: string) {
 async function navigate(destination: Destination) {
   if (destination.kind === 'focus') return;
   if (destination.kind === 'device') {
-    setState({ tab: 'device', appDialog: null, devicePrinter: destination.printer });
+    showDevice(destination.printer);
     return;
   }
   if (project.get().context.id !== destination.projectId) {

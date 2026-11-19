@@ -4,7 +4,7 @@ import { DEMO } from '../demo/config';
 import { hasWhatYouCanDo } from './what-you-can-do-page';
 import { ProjectTitle } from '../projects/ProjectTitle';
 import { MenuButton, type MenuEntry } from './Menu';
-import { showProjects } from '../flow/project';
+import { showDevice, showProjects } from '../flow/project';
 import { openPalette } from '../commands/registry';
 import { Suspense, useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { arrangeAll, canExport, STALE_RESULT_TIP, download, newProject, openFileDialog, openProjectDialog, outputKind, outsideVolumeWarning, saveProject, slice } from '../actions';
@@ -242,7 +242,7 @@ export function TabBar() {
         <button type="button" aria-label="Preview" aria-pressed={tab === 'preview'} className="view-tab" onClick={() => setState({ tab: 'preview' })}>
           <span>Preview</span>
         </button>
-        <button type="button" aria-label="Device" aria-pressed={tab === 'device'} className="view-tab" onClick={() => setState({ tab: 'device' })}>
+        <button type="button" aria-label="Device" aria-pressed={tab === 'device'} className="view-tab" onClick={() => showDevice()}>
           <span>Device</span>
         </button>
       </div>

@@ -1,5 +1,6 @@
 import { getState, setState, subscribeStore, toast } from '../state/store';
 import type { Transfer } from '../flow/transfer';
+import { showDevice as openDevice } from '../flow/project';
 
 export type SendTone = 'progress' | 'success' | 'waiting' | 'error';
 export interface SendOutcome { tone: SendTone; title: string; detail: string }
@@ -26,7 +27,7 @@ export const outcomeLabel = (t: Transfer, running = false) => t.job_end ? END_LA
   : t.state === 'cancelled' ? 'Cancelled' : t.outcome ? OUTCOME_LABEL[t.outcome] : 'Sending';
 export const outcomeTone = (t: Transfer, running = false) => t.job_end === 'failed' || t.outcome === 'failed' ? 'error' : running && !t.job_end ? 'printing' : undefined;
 
-export const openDevice = () => setState({ tab: 'device', appDialog: null });
+export { openDevice };
 
 const SHORT_REASON: Record<string, string> = { credentials: 'check the access code', developer_mode: 'turn on Developer Mode', busy: 'the printer is busy',
   storage: 'check the SD card', timeout: 'the printer did not answer', connection: 'cannot reach the printer', interrupted: 'the service restarted' };
@@ -37,9 +38,10 @@ export function noticeSend(t: Transfer) {
     const key = `${x.state}:${x.outcome}`;
     if (key === last) return;
     last = key;
-    if (x.state === 'done' && x.outcome === 'printing') toast(`Printing on ${x.name}`, { label: 'View', run: openDevice }, 8000, 'success', true);
-    else if (x.state === 'done' && x.outcome === 'uploaded') toast(`Uploaded to ${x.name}`, { label: 'View', run: openDevice }, 6000, 'success', true);
-    else if (x.state === 'done' && x.outcome === 'waiting_for_printer') toast(`Sent to ${x.name}—waiting for the print to start`, { label: 'View', run: openDevice }, 8000, 'warning');
+    const view = { label: 'View', run: () => openDevice(x.printer) };
+    if (x.state === 'done' && x.outcome === 'printing') toast(`Printing on ${x.name}`, view, 8000, 'success', true);
+    else if (x.state === 'done' && x.outcome === 'uploaded') toast(`Uploaded to ${x.name}`, view, 6000, 'success', true);
+    else if (x.state === 'done' && x.outcome === 'waiting_for_printer') toast(`Sent to ${x.name}—waiting for the print to start`, view, 8000, 'warning');
     else if (x.state === 'failed' || x.state === 'cancelled') toast(x.state === 'cancelled' ? 'Upload canceled' : `Couldn't send to ${x.name}${SHORT_REASON[x.reason ?? ''] ? `: ${SHORT_REASON[x.reason!]}` : ''}`, { label: 'Retry', run: () => setState({ appDialog: 'send' }) }, 10000, 'error');
   };
   const settled = (x: Transfer) => x.state !== 'uploading' && x.state !== 'starting' && x.outcome !== 'waiting_for_printer';

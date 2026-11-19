@@ -8,7 +8,7 @@ import type { DraftCheckpoint, DraftDurability, ProjectFailure } from './project
 import { documentGeneration, leaveDocument, newDocument, onLeaveDocument, sameContents, snapshot, subscribeHistory, type Doc } from '../state/history';
 import { getState, setState, subscribeStore, toast } from '../state/store';
 import { assertNever, createMachine, useMachine, type Machine, type Snapshot } from './fsm';
-import { currentRoute, writeRoute } from './routes';
+import { currentRoute, devicePath, writeRoute } from './routes';
 import type { createDraftJournal } from './project-journal';
 import { importing } from './import';
 import { writesDiscarded } from '../api/access';
@@ -117,6 +117,7 @@ function checkpointProject(document = snapshot(), id = project.get().context.id,
   return receipt;
 }
 const UNSAVED = 'unsavedProject';
+const DEVICE_WORKSPACE = 'deviceWorkspace';
 export function writeProjectRoute(replace = false) {
   const { id, savedAt } = project.get().context;
   if (savedAt) { writeRoute(`/p/${id}`, replace); return; }
@@ -290,19 +291,33 @@ function remote(message: { type?: string; id?: string; sender?: string }) {
 }
 
 let routeVersion = 0;
+let routedHref: string | undefined;
 async function route() {
   const mine = ++routeVersion;
+  routedHref = location.href;
   const r = currentRoute();
   routing = true;
   try {
-    if (r.kind === 'projects') {
+    if (r.kind === 'device') {
+      opening++;
+      if (project.get().value === 'opening') project.send({ type: 'BLANK' });
+      openingBusy.end();
+      setState({ tab: 'device', appDialog: null, devicePrinter: r.printer });
+    } else if (r.kind === 'projects') {
       opening++; await flushProject().catch(() => {});
       if (mine !== routeVersion) return;
       if ((project.get().value === 'opening' || project.get().value === 'missing')) project.send({ type: 'BLANK' });
       openingBusy.end(); setState({ tab: 'projects' });
     }
-    else if (r.kind === 'project') await openProject(r.id, { history: false });
+    else if (r.kind === 'project') {
+      const { id } = project.get().context;
+      if (r.id !== id || !restoreDeviceWorkspace()) await openProject(r.id, { history: false });
+    }
     else if (r.kind === 'blank') {
+      if (restoreDeviceWorkspace()) {
+        if (project.get().context.savedAt) writeProjectRoute(true);
+        return;
+      }
       versionView.send({ type: 'LATEST' });
       await flushProject();
       if (mine !== routeVersion) return;
@@ -312,6 +327,14 @@ async function route() {
     } else { versionView.send({ type: 'LATEST' }); opening++; epoch++; await flushProject(); project.send({ type: 'MISSING', id: '' }); setState({ tab: 'prepare' }); }
   } catch (e) { toast(errorText(e)); }
   finally { if (mine === routeVersion) routing = false; }
+}
+function restoreDeviceWorkspace(): boolean {
+  const workspace: unknown = history.state?.[DEVICE_WORKSPACE];
+  if (getState().tab !== 'device' || !workspace || typeof workspace !== 'object' ||
+      !('id' in workspace) || workspace.id !== project.get().context.id || !('tab' in workspace) ||
+      (workspace.tab !== 'prepare' && workspace.tab !== 'preview')) return false;
+  setState({ tab: workspace.tab });
+  return true;
 }
 let started: Promise<void> | null = null;
 export function startProjects(ready: Promise<unknown> = Promise.resolve()): Promise<void> {
@@ -335,7 +358,13 @@ async function start(ready: Promise<unknown>) {
   journal = createDraftJournal<Doc>(session.owner, draftStorage, codec, (id) => draftActivity!.beginProjectDraftMutation(id));
   observed = snapshot();
   subscribeStore(() => {
-    if (adopting || versionShown() || leaving) return;
+    if (adopting || leaving) return;
+    const { tab } = getState();
+    if (!routing && tab !== 'device' && currentRoute().kind === 'device') {
+      if (tab === 'projects') writeRoute('/projects');
+      else if (project.get().value !== 'opening') writeProjectRoute();
+    }
+    if (versionShown()) return;
     if (project.get().value === 'opening' || project.get().value === 'missing' || project.get().context.loadError || !project.get().context.loaded) {
       if (getState().tab === 'projects' && !routing) showProjects();
       return;
@@ -347,7 +376,7 @@ async function start(ready: Promise<unknown>) {
     if (!sameDoc(before, doc) && !(before && sameContents(before, doc)) && !uneditedBlank) {
       checkpointProject(doc);
       project.send({ type: 'EDIT' });
-      if (getState().tab !== 'projects' && !routing) writeProjectRoute(!project.get().context.savedAt);
+      if (tab !== 'projects' && tab !== 'device' && !routing) writeProjectRoute(!project.get().context.savedAt);
     }
     if (!routing) {
       const r = currentRoute(), tab = getState().tab;
@@ -395,7 +424,9 @@ async function start(ready: Promise<unknown>) {
   });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
   window.addEventListener('popstate', () => void route());
-  window.addEventListener('hashchange', () => void route());
+  window.addEventListener('hashchange', (event) => {
+    if (event.newURL === location.href && location.href !== routedHref) void route();
+  });
   if (typeof BroadcastChannel !== 'undefined') {
     channel = new BroadcastChannel('orca.projects'); channel.onmessage = (e) => remote(e.data);
   }
@@ -458,6 +489,15 @@ export async function retryProject() {
   }
 }
 export function showProjects() { writeRoute('/projects'); void route(); }
+export function showDevice(printer: string | null = null) {
+  const { tab } = getState();
+  const r = currentRoute();
+  if ((tab === 'prepare' || tab === 'preview') && (r.kind === 'blank' || r.kind === 'project')) {
+    history.replaceState({ ...history.state, [DEVICE_WORKSPACE]: { id: project.get().context.id, tab } }, '');
+  }
+  writeRoute(devicePath(printer));
+  void route();
+}
 export const openProject = async (id: string, options: { history?: boolean; reload?: boolean } = {}) => {
   if (versionShown()) options = { ...options, reload: true };
   versionView.send({ type: 'LATEST' });

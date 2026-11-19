@@ -85,7 +85,7 @@ function normalizeCode(value: string): string {
 }
 
 function blockersFor(status: PrinterStatus, hasPrint: boolean, stopped: boolean): Blocker[] {
-  const codes = [...new Set((status.messages ?? []).map(({ code }) => normalizeCode(code)))].sort();
+  const codes = new Set((status.messages ?? []).map(({ code }) => normalizeCode(code)));
   const blockers: Blocker[] = [];
   for (const code of codes) {
     if (nonblockingCodes.has(code) || (amsUnit.test(code.slice(0, 4)) && code.slice(4) === 'C008')) continue;
@@ -111,6 +111,25 @@ function blockerIdentity({ code, reason }: Blocker): string {
   if (reason === RUNOUT && (amsUnit.test(code.slice(0, 4)) || externalSpool.test(code.slice(0, 4))))
     return `${reason}:${code.slice(0, 4)}`;
   return code;
+}
+
+export function isActivePrint(status: PrinterStatus): boolean {
+  const { state, detail } = status;
+  return state === 'printing' || state === 'paused'
+    || (state === 'busy' && /^(?:PREPARE|SLICING)(?:, error [0-9A-F]{8})?$/.test(detail ?? ''));
+}
+
+export function printerBlockingIssue(status: PrinterStatus): { text: string; more: number } | undefined {
+  const { state } = status;
+  const blockers = blockersFor(status, isActivePrint(status) || state === 'failed', state === 'paused' || state === 'failed');
+  const issue = blockers.find(({ reason }) => reason !== undefined) ?? blockers[0];
+  if (!issue) return undefined;
+  const unit = issue.code.slice(0, 4);
+  const slot = issue.reason === RUNOUT && amsUnit.test(unit) ? /^2([0-3])000002000[15]$/.exec(issue.code.slice(4))?.[1] : undefined;
+  return {
+    text: slot === undefined ? issue.reason ?? ATTENTION : `${RUNOUT} (AMS ${Number(unit[3]) + 1}, slot ${Number(slot) + 1})`,
+    more: blockers.length - 1,
+  };
 }
 
 function timestamp(value: string | undefined): number | undefined {
@@ -169,8 +188,7 @@ export class PrinterNotificationTracker {
     if (at !== undefined && previous?.at !== undefined && at < previous.at) return undefined;
 
     const { state } = status;
-    const active = state === 'printing' || state === 'paused'
-      || (state === 'busy' && /^(?:PREPARE|SLICING)(?:, error [0-9A-F]{8})?$/.test(status.detail ?? ''));
+    const active = isActivePrint(status);
     const terminal = state === 'finished' || state === 'failed';
     const reportedJob: PrintJob = {
       id: status.job?.id.trim() || undefined,
@@ -190,7 +208,8 @@ export class PrinterNotificationTracker {
       file: reportedJob.file ?? previousJob?.file,
       startedAt: reportedJob.startedAt ?? previousJob?.startedAt,
     };
-    const blockers = blockersFor(status, active || (terminal && sameActive !== undefined), state === 'paused' || state === 'failed');
+    const blockers = blockersFor(status, active || (terminal && sameActive !== undefined), state === 'paused' || state === 'failed')
+      .sort((a, b) => a.code < b.code ? -1 : Number(a.code > b.code));
     this.snapshots.set(key, {
       at: at ?? previous?.at,
       activity: active ? { kind: 'active', job, paused: state === 'paused' }

@@ -16,7 +16,7 @@ export const shortName = (model: string) => {
 };
 
 const R = 12, C = 2 * Math.PI * R;
-interface Job { id: string; short: string; mark: string; detail: string; paused: boolean; progress: number }
+interface Job { id: string; printer: string; short: string; mark: string; detail: string; paused: boolean; progress: number }
 
 export function PrintingChip() {
   const jobs = useStore((s) => {
@@ -25,7 +25,7 @@ export function PrintingChip() {
       if (!st?.online || (st.state !== 'printing' && st.state !== 'paused')) return [];
       const model = c.kind.startsWith('bambu') && c.model && c.model !== '?' ? `Bambu Lab ${c.model}` : printerModel(s, c.printer);
       const named = c.name && c.name !== model && c.name !== c.model ? c.name : '';
-      return [{ id: c.id, short: shortName(model || c.name), mark: '', name: named, detail: `${named ? `${named} · ` : ''}${model || c.name}: ${statusLine(st)}`,
+      return [{ id: c.id, printer: c.printer, short: shortName(model || c.name), mark: '', name: named, detail: `${named ? `${named} · ` : ''}${model || c.name}: ${statusLine(st)}`,
         paused: st.state === 'paused', progress: st.progress ?? 0 }];
     });
     for (const j of list) {
@@ -39,7 +39,7 @@ export function PrintingChip() {
   const list = JSON.parse(jobs) as Job[];
   if (!list.length) return null;
   return <span className="print-rings">{list.map((j) =>
-    <button key={j.id} type="button" className="print-ring" data-paused={j.paused || undefined} onClick={openDevice}
+    <button key={j.id} type="button" className="print-ring" data-paused={j.paused || undefined} onClick={() => openDevice(j.printer)}
       aria-label={`${j.detail}. Open Device`} data-truncated="true" data-full-text={j.detail}>
       <svg viewBox="0 0 28 28" aria-hidden="true">
         <circle className="print-ring-track" cx="14" cy="14" r={R} />
