@@ -21,6 +21,34 @@ func replayBambuStatus(t *testing.T, reports ...[]byte) PrinterStatus {
 	return status
 }
 
+func TestBambuReportFieldNamesAndNumericIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, delta string
+		state       string
+		temp        uint32
+	}{
+		{"case folded update", `{"print":{"GCODE_STATE":"RUNNING"}}`, "RUNNING", 1},
+		{"exact name wins", `{"print":{"GCODE_STATE":"FAILED","gcode_state":"RUNNING"}}`, "RUNNING", 1},
+		{"malformed unicode field", `{"print":{"gcode_ſtate":{},"mc_percent":42}}`, "IDLE", 1},
+		{"nested folded names", `{"print":{"DEVICE":{"EXTRUDER":{"INFO":[{"ID":0,"TEMP":7}]}}}}`, "IDLE", 7},
+		{"negative zero identity", `{"print":{"device":{"extruder":{"info":[{"id":-0,"temp":7}]}}}}`, "IDLE", 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := map[string]any{}
+			if decodeBambuReport(state, []byte(`{"print":{"gcode_state":"IDLE","device":{"extruder":{"info":[{"id":0,"temp":1}]}}}}`)) == nil {
+				t.Fatal("could not decode initial state")
+			}
+			report := decodeBambuReport(state, []byte(tc.delta))
+			if report == nil || report.State != tc.state || report.Device == nil || report.Device.Extruder == nil || len(report.Device.Extruder.Info) != 1 || report.Device.Extruder.Info[0].Temp != tc.temp {
+				t.Fatalf("field normalization lost or duplicated state: %+v", report)
+			}
+			if tc.name == "malformed unicode field" && (report.Percent == nil || *report.Percent != 42) {
+				t.Fatalf("malformed case variant discarded valid sibling: %+v", report)
+			}
+		})
+	}
+}
+
 func TestBambuExternalTrayNozzle(t *testing.T) {
 	for _, c := range []struct {
 		name     string
@@ -165,6 +193,20 @@ func TestBambuStatusReports(t *testing.T) {
 		}
 	})
 
+	t.Run("wrong nested types keep valid siblings and cached values", func(t *testing.T) {
+		delta := []byte(`{"print":{"command":"push_status","msg":[],"gcode_state":"RUNNING","ams":{"ams":[{"id":7}]},"device":{"extruder":{"info":[{"id":"0","temp":1},{"id":1,"temp":15073502,"snow":[]}] },"nozzle":{"info":[{"id":0,"diameter":{},"stat":2},{"id":true,"diameter":0.8}]}},"hms":[false]}}`)
+		status := replayBambuStatus(t, reports[0], delta)
+		if status.State != "printing" || len(status.Trays) != 5 || len(status.Messages) != 2 {
+			t.Errorf("invalid collections or message type changed cached state: %+v", status)
+		}
+		if len(status.NozzleTemps) != 2 || status.NozzleTemps[0].ID != 0 || status.NozzleTemps[1] != (NozzleTemp{ID: 1, Actual: 222, Target: 230}) {
+			t.Errorf("malformed extruder fields prevented the valid temperature update: %v", status.NozzleTemps)
+		}
+		if len(status.Nozzles) != 2 || status.Nozzles[0].Diameter != 0.4 || !status.Nozzles[0].Abnormal {
+			t.Errorf("malformed nozzle fields prevented the status update: %v", status.Nozzles)
+		}
+	})
+
 	for _, c := range []struct {
 		name                       string
 		update                     []byte
@@ -200,7 +242,9 @@ func TestBambuStatusReports(t *testing.T) {
 			var message struct {
 				Print map[string]any `json:"print"`
 			}
-			if err := json.Unmarshal(report, &message); err != nil {
+			decoder := json.NewDecoder(bytes.NewReader(report))
+			decoder.UseNumber()
+			if err := decoder.Decode(&message); err != nil {
 				t.Fatal(err)
 			}
 			before, err := json.Marshal(message.Print)

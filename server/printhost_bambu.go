@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/rand"
@@ -25,6 +26,7 @@ import (
 )
 
 const bambuUser = "bblp"
+const bambuMQTTKeepAlive = 60 * time.Second
 
 func sendBambu(ctx context.Context, u *upload) (string, error) {
 	p := u.printer
@@ -102,6 +104,16 @@ type connError struct{ stage, msg string }
 
 func (e *connError) Error() string { return e.msg }
 
+type contextConn struct {
+	net.Conn
+	stop func() bool
+}
+
+func (c *contextConn) Close() error {
+	c.stop()
+	return c.Conn.Close()
+}
+
 func dialTLS(ctx context.Context, host string, port int, config *tls.Config) (*tls.Conn, error) {
 	dctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -112,15 +124,19 @@ func dialTLS(ctx context.Context, host string, port int, config *tls.Config) (*t
 		}
 		return nil, dialError(err, host, port)
 	}
-	conn := tls.Client(raw, config)
+	bound := &contextConn{Conn: raw, stop: context.AfterFunc(ctx, func() { raw.Close() })}
+	conn := tls.Client(bound, config)
 	if err := conn.HandshakeContext(dctx); err != nil {
-		raw.Close()
+		bound.Close()
 		if cause := context.Cause(ctx); cause != nil {
 			return nil, cause
 		}
 		return nil, handshakeError(err, port)
 	}
-	context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
+	if cause := context.Cause(ctx); cause != nil {
+		bound.Close()
+		return nil, cause
+	}
 	return conn, nil
 }
 
@@ -351,48 +367,77 @@ func mqttSession(ctx context.Context, p *PrinterConfig, secret string) (*tls.Con
 	if err != nil {
 		return nil, nil, err
 	}
-	fail := func(err error) (*tls.Conn, *bufio.Reader, error) {
+	r, err := mqttHandshake(conn, p.Serial, secret)
+	if err != nil {
 		conn.Close()
+		if cause := context.Cause(ctx); cause != nil {
+			err = cause
+		}
 		return nil, nil, err
 	}
+	return conn, r, nil
+}
+
+func mqttHandshake(conn net.Conn, serial, secret string) (*bufio.Reader, error) {
 	r := bufio.NewReader(conn)
 	id := make([]byte, 6)
 	rand.Read(id)
-	var connect []byte
-	connect = append(connect, 0, 4, 'M', 'Q', 'T', 'T', 4, 0xC2, 0, 60)
+	connect := []byte{0, 4, 'M', 'Q', 'T', 'T', 4, 0xC2}
+	connect = binary.BigEndian.AppendUint16(connect, uint16(bambuMQTTKeepAlive/time.Second))
 	connect = append(connect, mqttString("pancakeslicer-"+hex.EncodeToString(id))...)
 	connect = append(connect, mqttString(bambuUser)...)
 	connect = append(connect, mqttString(secret)...)
 	conn.SetDeadline(time.Now().Add(15 * time.Second))
 	if err := mqttWrite(conn, 0x10, connect); err != nil {
-		return fail(netError(err, "the printer (MQTT port 8883)"))
+		return nil, netError(err, "the printer (MQTT port 8883)")
 	}
-	kind, body, err := mqttRead(r)
+	packet, err := mqttReadPacket(r)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			return fail(&connError{"access_code", "the printer closed the MQTT connection at login; check the access code"})
+			return nil, &connError{"access_code", "the printer closed the MQTT connection at login; check the access code"}
 		}
-		return fail(netError(err, "the printer (MQTT port 8883)"))
+		return nil, netError(err, "the printer (MQTT port 8883)")
 	}
-	if kind != 2 || len(body) != 2 {
-		return fail(errors.New("unexpected MQTT reply"))
+	if packet.header != 0x20 || len(packet.body) != 2 {
+		return nil, &connError{"mqtt_connack", "unexpected MQTT connection reply"}
 	}
-	switch body[1] {
+	switch packet.body[1] {
 	case 0:
 	case 4, 5:
-		return fail(&connError{"access_code", "the printer rejected the access code (MQTT); check it on the printer's screen (Settings > Network)"})
+		return nil, &connError{"access_code", "the printer rejected the access code (MQTT); check it on the printer's screen (Settings > Network)"}
 	default:
-		return fail(fmt.Errorf("The printer declined the MQTT connection (code %d).", body[1]))
+		return nil, &connError{"mqtt_connack", fmt.Sprintf("The printer declined the MQTT connection (code %d).", packet.body[1])}
 	}
-	subscribe := append([]byte{0, 1}, mqttString("device/"+p.Serial+"/report")...)
+	const subscriptionID = 1
+	subscribe := append(binary.BigEndian.AppendUint16(nil, subscriptionID), mqttString("device/"+serial+"/report")...)
 	subscribe = append(subscribe, 0)
 	if err := mqttWrite(conn, 0x82, subscribe); err != nil {
-		return fail(err)
+		return nil, err
 	}
-	return conn, r, nil
+	var earlyReports bytes.Buffer
+	for {
+		packet, err := mqttReadPacket(r)
+		if err != nil {
+			return nil, &connError{"mqtt_suback", "could not read the printer's MQTT subscription reply"}
+		}
+		if packet.header>>4 == 3 && earlyReports.Len()+len(packet.body)+5 <= maxMQTTPacketSize {
+			mqttWrite(&earlyReports, packet.header, packet.body)
+			continue
+		}
+		if packet.header != 0x90 || len(packet.body) != 3 || binary.BigEndian.Uint16(packet.body) != subscriptionID {
+			return nil, &connError{"mqtt_suback", "unexpected MQTT subscription reply"}
+		}
+		if packet.body[2] != 0 {
+			return nil, &connError{"mqtt_suback", "the printer rejected the MQTT report subscription"}
+		}
+		if earlyReports.Len() > 0 {
+			r = bufio.NewReader(io.MultiReader(&earlyReports, r))
+		}
+		return r, nil
+	}
 }
 
-func mqttPublish(conn *tls.Conn, p *PrinterConfig, message any) error {
+func mqttPublish(conn io.Writer, p *PrinterConfig, message any) error {
 	command, _ := json.Marshal(message)
 	return mqttWrite(conn, 0x30, append(mqttString("device/"+p.Serial+"/request"), command...))
 }
@@ -402,7 +447,7 @@ func mqttPayload(kind byte, body []byte) []byte {
 		return nil
 	}
 	topicLength := int(binary.BigEndian.Uint16(body))
-	if 2+topicLength > len(body) {
+	if topicLength == 0 || 2+topicLength > len(body) {
 		return nil
 	}
 	return body[2+topicLength:]
@@ -518,20 +563,36 @@ func mqttWrite(w io.Writer, header byte, body []byte) error {
 			break
 		}
 	}
-	_, err := w.Write(append(packet, body...))
+	packet = append(packet, body...)
+	n, err := w.Write(packet)
+	if err == nil && n != len(packet) {
+		err = io.ErrShortWrite
+	}
 	return err
 }
 
 func mqttRead(r *bufio.Reader) (byte, []byte, error) {
+	packet, err := mqttReadPacket(r)
+	return packet.header >> 4, packet.body, err
+}
+
+const maxMQTTPacketSize = 4 << 20
+
+type mqttPacket struct {
+	header byte
+	body   []byte
+}
+
+func mqttReadPacket(r *bufio.Reader) (mqttPacket, error) {
 	header, err := r.ReadByte()
 	if err != nil {
-		return 0, nil, err
+		return mqttPacket{}, err
 	}
 	length, shift := 0, 0
 	for i := 0; ; i++ {
 		b, err := r.ReadByte()
 		if err != nil {
-			return 0, nil, err
+			return mqttPacket{}, err
 		}
 		length |= int(b&0x7f) << shift
 		shift += 7
@@ -539,17 +600,17 @@ func mqttRead(r *bufio.Reader) (byte, []byte, error) {
 			break
 		}
 		if i == 3 {
-			return 0, nil, errors.New("malformed MQTT length")
+			return mqttPacket{}, errors.New("malformed MQTT length")
 		}
 	}
-	if length > 4<<20 {
-		return 0, nil, errors.New("MQTT packet too large")
+	if length > maxMQTTPacketSize {
+		return mqttPacket{}, errors.New("MQTT packet too large")
 	}
 	body := make([]byte, length)
 	if _, err := io.ReadFull(r, body); err != nil {
-		return 0, nil, err
+		return mqttPacket{}, err
 	}
-	return header >> 4, body, nil
+	return mqttPacket{header: header, body: body}, nil
 }
 
 type PrinterTest struct {
@@ -926,29 +987,6 @@ func (b *bambuReport) status() PrinterStatus {
 
 const bambuCancelled = 0x0300400C
 
-func decodeBambuReport(state map[string]any, payload []byte) *bambuReport {
-	var message struct {
-		Print map[string]any `json:"print"`
-	}
-	if json.Unmarshal(payload, &message) != nil || message.Print == nil {
-		return nil
-	}
-	candidate := maps.Clone(state)
-	mergeReport(candidate, message.Print)
-	raw, err := json.Marshal(candidate)
-	if err != nil {
-		return nil
-	}
-	var report bambuReport
-	if json.Unmarshal(raw, &report) != nil {
-		return nil
-	}
-	pruneAbsentBambuInventory(candidate)
-	clear(state)
-	maps.Copy(state, candidate)
-	return &report
-}
-
 func pruneAbsentBambuInventory(state map[string]any) {
 	ams, _ := state["ams"].(map[string]any)
 	units, _ := ams["ams"].([]any)
@@ -1013,8 +1051,8 @@ func clearAbsentBambuTrays(unit map[string]any, layout bambuAMSLayout, mask *uin
 }
 
 func mergeReport(into, delta map[string]any) {
-	msg, hasMsg := delta["msg"]
-	if delta["command"] == "push_status" && (!hasMsg || msg == float64(0)) {
+	msg, _ := delta["msg"].(json.Number)
+	if delta["command"] == "push_status" && (msg == "0" || msg == "-0") {
 		clear(into)
 	}
 	mergeReportFields(into, normalizeExternalTray(delta), "")
@@ -1063,6 +1101,15 @@ func normalizeExternalTray(delta map[string]any) map[string]any {
 	return delta
 }
 
+func bambuKeyedReportRows(path string) bool {
+	switch path {
+	case "vir_slot", "ams.ams", "ams.ams.tray", "device.extruder.info", "device.nozzle.info":
+		return true
+	default:
+		return false
+	}
+}
+
 func mergeReportFields(into, delta map[string]any, prefix string) {
 	for key, update := range delta {
 		path := prefix + key
@@ -1072,7 +1119,8 @@ func mergeReportFields(into, delta map[string]any, prefix string) {
 			if !ok || bambuExistenceMask(&value) == nil {
 				continue
 			}
-		case "vir_slot", "ams.ams", "ams.ams.tray", "device.extruder.info", "device.nozzle.info":
+		}
+		if bambuKeyedReportRows(path) {
 			if rows, ok := update.([]any); ok {
 				if previous, ok := into[key].([]any); ok {
 					into[key] = mergeReportRows(previous, rows, path+".")
@@ -1126,7 +1174,7 @@ func indexReportRows(rows []any) map[any]int {
 		}
 		id := row["id"]
 		switch id.(type) {
-		case string, float64:
+		case string, json.Number:
 		default:
 			return nil
 		}
@@ -1144,8 +1192,7 @@ func amsBambu(ctx context.Context, p *PrinterConfig, secret string) ([]AMSTray, 
 		return nil, err
 	}
 	defer conn.Close()
-	sequence := strconv.FormatInt(time.Now().UnixMilli()%1_000_000_000, 10)
-	if err := mqttPublish(conn, p, map[string]any{"pushing": map[string]any{"sequence_id": sequence, "command": "pushall"}}); err != nil {
+	if err := requestBambuStatus(conn, p); err != nil {
 		return nil, err
 	}
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
@@ -1165,39 +1212,9 @@ func amsBambu(ctx context.Context, p *PrinterConfig, secret string) ([]AMSTray, 
 	}
 }
 
-func monitorBambu(ctx context.Context, p *PrinterConfig, secret string, publish func(PrinterStatus)) error {
-	conn, r, err := mqttSession(ctx, p, secret)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
+func requestBambuStatus(conn io.Writer, p *PrinterConfig) error {
 	sequence := strconv.FormatInt(time.Now().UnixMilli()%1_000_000_000, 10)
-	if err := mqttPublish(conn, p, map[string]any{"pushing": map[string]any{"sequence_id": sequence, "command": "pushall"}}); err != nil {
-		return err
-	}
-	state := map[string]any{}
-	heard := time.Now()
-	for {
-		conn.SetReadDeadline(time.Now().Add(20 * time.Second))
-		kind, body, err := mqttRead(r)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if os.IsTimeout(err) && time.Since(heard) < 65*time.Second {
-				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := mqttWrite(conn, 0xC0, nil); err != nil {
-					return netError(err, "the printer (MQTT port 8883)")
-				}
-				continue
-			}
-			return netError(err, "the printer (MQTT port 8883)")
-		}
-		heard = time.Now()
-		if report := decodeBambuReport(state, mqttPayload(kind, body)); report != nil && report.State != "" {
-			publish(report.status())
-		}
-	}
+	return mqttPublish(conn, p, map[string]any{"pushing": map[string]any{"sequence_id": sequence, "command": "pushall"}})
 }
 
 func controlBambu(ctx context.Context, p *PrinterConfig, secret, action string) error {

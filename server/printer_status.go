@@ -177,6 +177,9 @@ func (h *statusHub) run(ctx context.Context, mon *monitor) {
 		if time.Since(began) > time.Minute {
 			backoff = 3 * time.Second
 		}
+		if p.Kind == "bambu-lan" {
+			bambuSessionLog.Info("bambu_mqtt_reconnect", "printer", p.Name, "reason", bambuSessionReason(err), "retry_after_seconds", int(backoff.Seconds()))
+		}
 		select {
 		case <-ctx.Done():
 			return
