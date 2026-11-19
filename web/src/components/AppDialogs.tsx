@@ -1,5 +1,6 @@
 import { savePreferences, usePreference } from '../saved-preferences';
 import { AFTER_SLICE_PREFERENCE, afterSlicePreference, type AfterSliceAction } from '../after-slice';
+import { FLOW_CALIBRATION_OPTIONS, FLOW_CALIBRATION_PREFERENCE, flowCalibrationPreference } from '../flow-calibration';
 import { preloadable } from '../preloadable';
 import { Check } from './Check';
 import { Suspense, useState, useSyncExternalStore } from 'react';
@@ -9,6 +10,7 @@ import { cameraPrefsSnapshot, setCameraPrefs, subscribeCamera, type CameraPrefs 
 import { InfoTip } from './InfoTip';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 import { notificationSettingsSnapshot, setNotificationsEnabled, subscribeNotificationSettings } from '../notifications/browser';
+import { Choice } from './kit';
 
 const About = preloadable(() => import('./About'));
 const PlateSettings = preloadable(() => import('./PlateSettings'));
@@ -45,6 +47,7 @@ function Preferences() {
   const mixed = useStore((s) => s.mixedTemperatures);
   const canMix = useStore((s) => !!s.features.mixed_temperatures);
   const afterSlice = afterSlicePreference(usePreference(AFTER_SLICE_PREFERENCE));
+  const flowCalibration = flowCalibrationPreference(usePreference(FLOW_CALIBRATION_PREFERENCE));
   const hasConfiguredPrinter = useStore((s) => s.printerConnections.connections.length > 0);
   const afterSliceNote = afterSlice === 'send' && !hasConfiguredPrinter;
   const notifications = useSyncExternalStore(subscribeNotificationSettings, notificationSettingsSnapshot);
@@ -67,11 +70,18 @@ function Preferences() {
         <label className="modal-check"><Check checked={camera.zoomToMouse} onCheckedChange={(next) => setCameraPrefs({ zoomToMouse: next })} />Zoom to mouse position</label>
         <label className="modal-check"><Check checked={camera.reverseZoom} onCheckedChange={(next) => setCameraPrefs({ reverseZoom: next })} />Reverse zoom direction</label>
         <h3 className="modal-group">Defaults</h3>
-        <div className="after-slice-setting">
+        <div className="default-setting">
           <div className="form-row"><span>After slicing</span>
             <span className="seg" role="radiogroup" aria-label="After slicing" aria-describedby={afterSliceNote ? 'after-slice-note' : undefined}>{AFTER_SLICE_ACTIONS.map(([value, label]) =>
               <button key={value} type="button" role="radio" aria-checked={afterSlice === value} onClick={() => savePreferences({ [AFTER_SLICE_PREFERENCE]: value })}>{label}</button>)}</span></div>
-          {afterSliceNote && <p id="after-slice-note" className="notification-setting-note after-slice-note">No printer set up yet, so Export stays primary.</p>}
+          {afterSliceNote && <p id="after-slice-note" className="notification-setting-note default-setting-note">No printer set up yet, so Export stays primary.</p>}
+        </div>
+        <div className="default-setting">
+          <div className="form-row"><span>Flow calibration</span>
+            <Choice label="Flow calibration" value={flowCalibration} options={FLOW_CALIBRATION_OPTIONS} describedBy="flow-calibration-note"
+              onChange={(value) => savePreferences({ [FLOW_CALIBRATION_PREFERENCE]: value })} />
+          </div>
+          <p id="flow-calibration-note" className="notification-setting-note default-setting-note">Auto skips calibration if the filament was calibrated recently; printers without Auto use On.</p>
         </div>
         <h3 className="modal-group">Notifications</h3>
         <div className="notification-setting">

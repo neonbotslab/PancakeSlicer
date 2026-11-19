@@ -22,6 +22,9 @@ import { matchedTrays, slotOf, usePrinterSlots } from '../printers/slots';
 import { connectionOf, connectionOutput, KIND_LABEL, presenceStatus, readTrays, type Tray } from '../printers/connections';
 import { printerCapabilities } from '../printers/capabilities';
 import { noticeSend, openDevice, sendOutcome } from '../printers/sendOutcome';
+import { FLOW_CALIBRATION_OPTIONS, FLOW_CALIBRATION_PREFERENCE, effectiveFlowCalibration, flowCalibrationPreference, type FlowCalibrationMode } from '../flow-calibration';
+import { preference } from '../saved-preferences';
+import { Choice } from './kit';
 import '../printers/printers.css';
 
 const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -86,7 +89,9 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
   const machineConfig = useStore((s) => effectiveConfig(s, 'machine'));
   const capabilities = printerCapabilities(useStore((s) => printerModel(s, printer)) || connection.model || '');
   const [leveling, setLeveling] = useState(true);
-  const [flowCali, setFlowCali] = useState(false);
+  const [flowCalibration, setFlowCalibration] = useState(() => flowCalibrationPreference(preference(FLOW_CALIBRATION_PREFERENCE)));
+  const supportsAutoFlow = connection.auto_flow_calibration === true;
+  const flowCali = effectiveFlowCalibration(flowCalibration, supportsAutoFlow);
   const [vibration, setVibration] = useState(true);
   const [timelapse, setTimelapse] = useState(false);
   const filamentKey = useStore((s) => JSON.stringify(s.filamentSlots.map((name, i) => {
@@ -103,6 +108,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
     const material = sliced?.mapping?.materials.find((row) => row.slot === i + 1);
     return { ...filament, ...material, hasFilamentSwitch: sliced?.mapping?.has_filament_switch, ...(multiNozzle && nozzle && nozzle > 0 ? { extruder: nozzle - 1 } : {}) };
   }), [filamentKey, sliced?.mapping, multiNozzle]);
+  const tpuFlowNote = flowCali !== 'off' && filaments.some((filament) => filament.type.toUpperCase() === 'TPU');
   const liveTrays = status?.online ? status.trays : undefined;
   const [readTraysList, setReadTrays] = useState<Tray[] | null>(null);
   const [amsError, setAmsError] = useState('');
@@ -152,7 +158,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
       toast('The printer is busy. Wait for it to finish before starting another print.');
       return;
     }
-    const options = !bambu ? {} : { bed_leveling: leveling, flow_cali: flowCali, vibration_cali: vibration, timelapse: capabilities.timelapse && timelapse, ...(trays && shown.length === filaments.length && shown.every((id) => id >= 0) ? { ams_mapping: shown, ams_mapping_2: physicalMapping(shown, trays) } : {}) };
+    const options = !bambu ? {} : { bed_leveling: leveling, flow_cali_mode: flowCali, vibration_cali: vibration, timelapse: capabilities.timelapse && timelapse, ...(trays && shown.length === filaments.length && shown.every((id) => id >= 0) ? { ams_mapping: shown, ams_mapping_2: physicalMapping(shown, trays) } : {}) };
     await printerSend.submit(printer, jobId, { start, filename: exportFilename(), ...options });
   };
   const handOff = async () => {
@@ -223,9 +229,14 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
       {blocked && <div className="warning-text">{blocked}</div>}
       {bambu && fits && <div className="send-options" role="group" aria-label="Print options">
         <label className="modal-check"><Check checked={leveling} disabled={busy} onCheckedChange={setLeveling} />Bed leveling</label>
-        <label className="modal-check"><Check checked={flowCali} disabled={busy} onCheckedChange={setFlowCali} />Flow calibration</label>
         <label className="modal-check"><Check checked={vibration} disabled={busy} onCheckedChange={setVibration} />Vibration calibration</label>
         {capabilities.timelapse && <label className="modal-check"><Check checked={timelapse} disabled={busy} onCheckedChange={setTimelapse} />Timelapse</label>}
+        <div className="send-flow-calibration"><span>Flow calibration</span>
+          <Choice<FlowCalibrationMode> label="Flow calibration" value={flowCali} disabled={busy} onChange={setFlowCalibration}
+            options={supportsAutoFlow ? FLOW_CALIBRATION_OPTIONS : FLOW_CALIBRATION_OPTIONS.filter(({ id }) => id !== 'auto')}
+            describedBy={tpuFlowNote ? 'send-flow-calibration-note' : undefined} />
+        </div>
+        {tpuFlowNote && <p id="send-flow-calibration-note" className="send-note">For TPU, Auto/On reuse previous or default values.</p>}
       </div>}
       {bambu && fits && (
         <section className="send-section" aria-label="Filaments"><div className="send-section-head"><h3>Filaments</h3>

@@ -56,6 +56,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
   const fields = useRef(0);
   const touched = () => { fields.current++; setTest(null); };
   const changed = <T,>(set: (v: T) => void) => (v: T) => { set(v); touched(); };
+  const identityChanged = <T,>(set: (v: T) => void) => (v: T) => { setModel(''); changed(set)(v); };
 
   const run = async (what: string, action: () => Promise<void>) => {
     setWorking(what); setError('');
@@ -70,7 +71,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
       ['Use anyway', 'Cancel'], true)) return;
     setKind(d.kind); touched();
     if (d.kind === 'bambu-lan' || d.kind === 'flashforge') { setHost(d.host ?? ''); setSerial(d.serial ?? ''); setModel(d.model ?? ''); }
-    else setUrl((d.url ?? '').replace(/^http:\/\//, ''));
+    else { setUrl((d.url ?? '').replace(/^http:\/\//, '')); setModel(''); }
   };
   const addAsNew = (d: Discovered) => run('add', async () => {
     const { createProfileFromBase } = await import('../profiles/catalog');
@@ -89,18 +90,18 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
         </div>
       )}
       <label className="form-row"><span>Host type</span>
-        <Dropdown className="combo" value={kind} onValueChange={(v) => changed(setKind)(v as ConnectionKind)}
+        <Dropdown className="combo" value={kind} onValueChange={(v) => identityChanged(setKind)(v as ConnectionKind)}
           options={(Object.keys(KIND_LABEL) as ConnectionKind[]).map((k) => ({ value: k, label: KIND_LABEL[k] }))} />
       </label>
       {bambu && <>
-        <label className="form-row"><span>Printer IP</span><input className="text" value={host} placeholder="192.168.1.60" spellCheck={false} onChange={(e) => changed(setHost)(e.target.value)} /></label>
-        <label className="form-row"><span>Serial number</span><input className="text" value={serial} spellCheck={false} onChange={(e) => changed(setSerial)(e.target.value)} /></label>
+        <label className="form-row"><span>Printer IP</span><input className="text" value={host} placeholder="192.168.1.60" spellCheck={false} onChange={(e) => identityChanged(setHost)(e.target.value)} /></label>
+        <label className="form-row"><span>Serial number</span><input className="text" value={serial} spellCheck={false} onChange={(e) => identityChanged(setSerial)(e.target.value)} /></label>
         <label className="form-row"><span>Access code</span><input className="text" type="password" autoComplete="new-password" value={secret} placeholder={hasSecret ? 'Stored' : ''} onChange={(e) => changed(setSecret)(e.target.value)} /></label>
         <div className="hint-text connection-hint">On your printer screen, go to Settings › Network › LAN Only and turn on Developer Mode to find your access code.</div>
       </>}
       {flashforge && <>
-        <label className="form-row"><span>Printer IP</span><input className="text" value={host} placeholder="192.168.1.60" spellCheck={false} onChange={(e) => changed(setHost)(e.target.value)} /></label>
-        <label className="form-row"><span>Serial number (optional)</span><input className="text" value={serial} spellCheck={false} onChange={(e) => changed(setSerial)(e.target.value)} /></label>
+        <label className="form-row"><span>Printer IP</span><input className="text" value={host} placeholder="192.168.1.60" spellCheck={false} onChange={(e) => identityChanged(setHost)(e.target.value)} /></label>
+        <label className="form-row"><span>Serial number (optional)</span><input className="text" value={serial} spellCheck={false} onChange={(e) => identityChanged(setSerial)(e.target.value)} /></label>
         <label className="form-row"><span>Check code (optional)</span><input className="text" type="password" autoComplete="new-password" value={secret} placeholder={hasSecret ? 'Stored' : ''} onChange={(e) => changed(setSecret)(e.target.value)} /></label>
         <div className="hint-text connection-hint">The IP address is enough. With the serial number and check code from the printer's network settings, uploads use its HTTP API.</div>
       </>}
@@ -108,7 +109,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
         ? "Sending opens your sliced file in Bambu Connect on this computer to print through your Bambu account—handy when your printer is in cloud mode."
         : "Bambu Connect runs locally on your computer, so direct sending requires the desktop app. In a browser, just download the .gcode.3mf file and open it in Bambu Connect."}</div>}
       {http && <>
-        <label className="form-row"><span>Hostname, IP or URL</span><input className="text" value={url} placeholder={kind === 'moonraker' ? '192.168.1.70:7125' : '192.168.1.70'} spellCheck={false} onChange={(e) => changed(setUrl)(e.target.value)} /></label>
+        <label className="form-row"><span>Hostname, IP or URL</span><input className="text" value={url} placeholder={kind === 'moonraker' ? '192.168.1.70:7125' : '192.168.1.70'} spellCheck={false} onChange={(e) => identityChanged(setUrl)(e.target.value)} /></label>
         {kind === 'prusalink' && (
           <label className="form-row"><span>Authorization</span>
             <Dropdown className="combo" value={auth} onValueChange={(v) => changed(setAuth)(v)} options={[{ value: 'apikey', label: 'API key' }, { value: 'digest', label: 'HTTP digest' }]} />

@@ -32,7 +32,10 @@ export function Modal({ label, onClose, className = '', size = 'window', alert =
       onOpenAutoFocus={(e) => { e.preventDefault(); focusFirst(e.currentTarget as HTMLElement); }} onEscapeKeyDown={onEscapeKeyDown}
       onPointerDownOutside={(e) => { if (!backdropClose || inTopLayer(e)) e.preventDefault(); }} onFocusOutside={(e) => { if (inTopLayer(e)) e.preventDefault(); }}
       onCloseAutoFocus={(e) => { const back = returnFocus ? document.querySelector<HTMLElement>(returnFocus) : null; if (back) { e.preventDefault(); back.focus(); } }}
-      onKeyDown={(e) => e.stopPropagation()}><Counted />{children}</Dialog.Content></Dialog.Portal></Dialog.Root>;
+      onKeyDown={(e) => {
+        const radioArrow = e.defaultPrevented && e.key.startsWith('Arrow') && e.target instanceof Element && e.target.closest('[role="radiogroup"]');
+        if (!radioArrow) e.stopPropagation();
+      }}><Counted />{children}</Dialog.Content></Dialog.Portal></Dialog.Root>;
 }
 export function ModalTitle({ title, onClose }: { title: ReactNode; onClose(): void }) {
   return <div className="modal-title"><Dialog.Title asChild><h2>{title}</h2></Dialog.Title><button type="button" className="modal-close" aria-label="Close" onClick={onClose}><Glyph name="close" size={14} /></button></div>;

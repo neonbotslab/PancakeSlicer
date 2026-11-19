@@ -30,6 +30,8 @@
 :where(.orca-parity) .send-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-1) var(--s-6); }
 :where(.orca-parity) .send-options .modal-check { align-items: center; white-space: nowrap; min-height: var(--h-control); font: var(--t-body); }
 :where(.orca-parity) .send-options .control-check { flex: none; }
+:where(.orca-parity) .send-flow-calibration, :where(.orca-parity) .send-options > .send-note { grid-column: 1 / -1; }
+:where(.orca-parity) .send-flow-calibration { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2) var(--s-4); }
 :where(.orca-parity) .ams-map { display: grid; gap: var(--s-2); }
 :where(.orca-parity) .send-map-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); align-items: center; gap: var(--s-4); }
 :where(.orca-parity) .send-project-filament { display: flex; align-items: center; gap: var(--s-3); min-width: 0; font: var(--t-small); }

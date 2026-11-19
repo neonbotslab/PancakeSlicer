@@ -54,5 +54,5 @@
 :where(.orca-parity) .notification-setting .modal-check:has(> .control-check:disabled) { color: color-mix(in srgb, var(--ink) 50%, transparent); cursor: not-allowed; }
 :where(.orca-parity) .notification-setting .modal-check > .control-check:disabled { opacity: 0.5; cursor: not-allowed; }
 :where(.orca-parity) .notification-setting-note { margin: 0; margin-inline-start: calc(16px + var(--s-3)); color: var(--muted); font: var(--t-small); }
-:where(.orca-parity) .after-slice-setting { display: grid; gap: 4px; }
-:where(.orca-parity) .after-slice-note { margin-inline-start: 0; }
+:where(.orca-parity) .default-setting { display: grid; gap: 4px; }
+:where(.orca-parity) .default-setting-note { margin-inline-start: 0; }
