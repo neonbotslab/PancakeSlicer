@@ -11,7 +11,8 @@ export function sameMappedTrays({ before, after, mapping }: { before: Tray[]; af
     return !!previous && !!current && previous.ams === current.ams && previous.slot === current.slot
       && previous.extruder === current.extruder && previous.kind === current.kind
       && previous.type.trim().toUpperCase() === current.type.trim().toUpperCase()
-      && previous.color.toUpperCase() === current.color.toUpperCase() && previous.filament_id === current.filament_id;
+      && previous.color.toUpperCase() === current.color.toUpperCase() && previous.filament_id === current.filament_id
+      && (previous.spool ?? '') === (current.spool ?? '');
   });
 }
 

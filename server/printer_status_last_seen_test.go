@@ -9,7 +9,7 @@ import (
 func TestOfflinePrinterStatusKeepsLastOnlineReport(t *testing.T) {
 	m := NewSendManager(nil)
 	p := &PrinterConfig{Printer: "fixture"}
-	mon := &monitor{cfg: p}
+	mon := &monitor{cfg: p, link: LinkConnecting}
 	m.hub.monitors[p.Printer] = mon
 
 	offline := PrinterStatus{State: "offline", Detail: "fixture unavailable"}
@@ -56,7 +56,7 @@ func TestLastSeenSurvivesIdleMonitorRetirement(t *testing.T) {
 	m := NewSendManager(nil)
 	p := &PrinterConfig{Printer: "fixture"}
 	m.conns = []*PrinterConfig{p}
-	mon := &monitor{cfg: p, cancel: func() {}}
+	mon := &monitor{cfg: p, link: LinkConnecting, cancel: func() {}}
 	m.hub.monitors[p.Printer] = mon
 	m.hub.set(mon, PrinterStatus{State: "idle", Online: true})
 	m.hub.set(mon, PrinterStatus{State: "offline"})
@@ -65,7 +65,7 @@ func TestLastSeenSurvivesIdleMonitorRetirement(t *testing.T) {
 	if _, ok := m.hub.current(p.Printer); ok {
 		t.Fatal("idle monitor status was not retired")
 	}
-	resumed := &monitor{cfg: p, cancel: func() {}}
+	resumed := &monitor{cfg: p, link: LinkConnecting, cancel: func() {}}
 	m.hub.monitors[p.Printer] = resumed
 	m.hub.set(resumed, PrinterStatus{State: "offline"})
 	after, _ := m.hub.current(p.Printer)

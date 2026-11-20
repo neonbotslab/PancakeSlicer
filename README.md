@@ -2,6 +2,9 @@
 
 PancakeSlicer is a Self-hostable and Non-planar 3D Printer Slicer built on the OrcaSlicer Engine. Try a demo [here](https://demo.pancake.cooking/)! Watch the video explainer [here (yt)](https://youtu.be/cRSoVq_reGQ). 
 
+> [!NOTE]
+> Heard us at FormNext? Checkout the WIP [5-axis support branch](https://github.com/ZimengXiong/PancakeSlicer/tree/dev), view the gcode simulation [here](https://goethelab.pancake.cooking/?demo=floating_pour&size=large) and the PancakeSlicer Advanced demo [here](http://demo5x.pancake.cooking/) (if it's down, try checking back later, still spinning things up)
+
 Everything is a WIP. Come talk about Non Planar (or PancakeSlicer issues) on [Discord](https://discord.gg/fubwyFYsen). [Contributions](https://github.com/ZimengXiong/PancakeSlicer/compare) (we are looking to extend our comptability list) or [Sponsorships](https://github.com/sponsors/ZimengXiong) are welcome and appreciated
 
 

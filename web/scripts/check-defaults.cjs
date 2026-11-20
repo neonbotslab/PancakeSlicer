@@ -32,7 +32,7 @@ async function configured(page, exists, online = false) {
     window.__plater.setState({ printerConnections: {
       enabled: true, live: true, transfers: [],
       connections: exists ? [{ printer: s.printer, id: 'defaults-browser', name: 'Test printer', kind: 'moonraker', has_secret: true }] : [],
-      status: exists ? { [s.printer]: { printer: s.printer, online, state: online ? 'idle' : 'offline', at: new Date().toISOString() } } : {},
+      status: exists ? { [s.printer]: { printer: s.printer, link: online ? 'online' : 'retrying', online, state: online ? 'idle' : 'offline', at: new Date().toISOString() } } : {},
     } });
   }, { exists, online });
 }
@@ -99,7 +99,13 @@ async function outputState(page, expected, width) {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(base);
     await page.waitForFunction(() => window.__plater && window.__plater.getState().profileLibraryLoad.state === 'ready');
-    await page.waitForFunction(() => [...document.querySelectorAll('.tabbar-actions button')].some(button => button.textContent.trim() === 'Slice plate' && !button.disabled));
+    const project = await page.evaluate(async () => (await (await fetch('/api/demo/sample')).json()).project);
+    await page.goto(`${base.replace(/#.*$/, '')}#/p/${encodeURIComponent(project)}`);
+    await page.waitForFunction(() => window.__plater?.getState().job.state === 'done');
+    await page.evaluate(() => {
+      const app = window.__plater;
+      app.setState({ tab: 'prepare', job: { id: app.getState().job.id, state: 'idle', pct: 0, stage: '' } });
+    });
     let dialog = await preferences(page);
     assert.equal(await dialog.getByRole('radio', { name: 'Export', exact: true }).getAttribute('aria-checked'), 'true');
     assert.deepEqual(await dialog.locator('h3.modal-group').allTextContents(), ['Camera', 'Defaults', 'Notifications', 'Advanced']);
@@ -145,7 +151,6 @@ async function outputState(page, expected, width) {
     dialog = await preferences(page);
     assert.equal(await dialog.getByRole('radio', { name: 'Send to printer', exact: true }).getAttribute('aria-checked'), 'true');
     await closePreferences(dialog);
-    await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
     await page.waitForFunction(() => window.__plater.getState().job.state === 'done', null, { timeout: 30000 });
     const layouts = [];
     for (const width of [1360, 1000, 800, 390, 320]) layouts.push(await outputState(page, 'export', width));
@@ -160,8 +165,8 @@ async function outputState(page, expected, width) {
     dialog = await preferences(page, 'Send to printer');
     assert.equal(await dialog.getByText(noteText, { exact: true }).count(), 0);
     await closePreferences(dialog);
-    await page.keyboard.press('Control+g');
-    await page.getByRole('alert').getByText('Not available in demo mode', { exact: true }).waitFor();
+    await page.keyboard.press('Control+e');
+    await page.getByText('Not available in demo mode', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__plater.getState().appDialog), null);
     await page.setViewportSize({ width: 1000, height: 900 });
     await page.locator('.tabbar-actions').getByRole('button', { name: 'Send to printer', exact: true }).click();

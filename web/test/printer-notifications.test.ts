@@ -11,7 +11,7 @@ const file = 'Example.gcode.3mf';
 const finishedAt = '2026-01-01T01:02:00Z';
 
 function status(state: PrinterStatus['state'], fields: Partial<PrinterStatus> = {}): PrinterStatus {
-  return { printer: printer.printer, online: true, state, at: finishedAt, ...fields };
+  return { printer: printer.printer, link: 'online', online: true, state, at: finishedAt, ...fields };
 }
 
 function setup(connection = printer) {

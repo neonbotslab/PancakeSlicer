@@ -61,14 +61,15 @@ async function fixture(page) {
   await page.waitForFunction(() => window.__plater?.getState().profileLibraryLoad.state === 'ready');
   return page.evaluate(() => {
     const app = window.__plater, s = app.getState();
-    const template = s.userPresets.find(p => p.type === 'machine' && (p.id === s.printer || p.name === s.printer));
+    const template = s.records.printers.find(p => p.id === s.printer) ?? s.records.printers[0];
     if (!template) throw new Error('Demo printer profile is missing');
     const names = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo'], models = ['H2D', 'P1S', 'A1 mini', 'A1', 'H2D'];
     const keys = names.map(name => `overview-${name.toLowerCase()}`);
-    const profiles = names.map((name, i) => ({ ...structuredClone(template), id: keys[i], name, overlay: { ...template.overlay, printer_model: models[i] }, overrides: { ...template.overrides, printer_model: models[i] } }));
+    const profiles = names.map((name, i) => ({ ...structuredClone(template), id: keys[i], name, model: models[i],
+      slots: template.slots.map((slot, j) => ({ ...slot, id: `${keys[i]}:${j}` })) }));
     const connections = names.map((name, i) => ({ printer: keys[i], id: keys[i], name, model: models[i], kind: 'bambu-lan', has_secret: true }));
     const now = new Date().toISOString();
-    const statuses = ['printing', 'paused', 'idle', 'offline', 'idle'].map((state, i) => ({ printer: keys[i], state, online: state !== 'offline', at: now, last_seen: new Date(2026, 10, 19, 15, 12).toISOString(),
+    const statuses = ['printing', 'paused', 'idle', 'offline', 'idle'].map((state, i) => ({ printer: keys[i], state, link: state === 'offline' ? 'retrying' : 'online', online: state !== 'offline', at: now, last_seen: new Date(2026, 10, 19, 15, 12).toISOString(),
       ...(i < 2 ? { file: i ? 'Hinge bracket.gcode.3mf' : 'Benchy prototype.gcode.3mf', progress: i ? 0.38 : 0.62, remaining_s: 4440 } : {}),
       ...(i === 1 ? { messages: [{ code: '07002200-00020001', message: 'raw message is intentionally ignored' }, { code: '12038005' }] } : {}) }));
     const original = window.fetch;
@@ -78,7 +79,7 @@ async function fixture(page) {
       if (/^\/api\/printer-sends/.test(url.pathname)) return Promise.resolve(new Response(JSON.stringify({ sends: [], total: 0 }), { headers: { 'Content-Type': 'application/json' } }));
       return original(input, options);
     };
-    app.setState({ userPresets: [...s.userPresets, ...profiles], printerConnections: { enabled: true, live: true, transfers: [], connections, status: Object.fromEntries(statuses.map(status => [status.printer, status])) } });
+    app.setState({ records: { ...s.records, printers: [...s.records.printers, ...profiles] }, printerConnections: { enabled: true, live: true, transfers: [], connections, status: Object.fromEntries(statuses.map(status => [status.printer, status])) } });
     return { keys, document: JSON.stringify({ project: s.project, projectName: s.projectName, objects: s.objects }) };
   });
 }
@@ -139,7 +140,7 @@ async function fixture(page) {
     await page.getByRole('heading', { name: 'All printers', exact: true }).waitFor();
     assert.equal(await scroll.evaluate(el => el.scrollTop), scrollBefore);
     await cards.last().click();
-    await page.locator('.device-printer').nth(1).click();
+    await page.locator('.device-printer[href$="/device/overview-bravo"]').click();
     await page.getByRole('link', { name: '← All printers', exact: true }).click();
     await page.getByRole('heading', { name: 'All printers', exact: true }).waitFor();
     assert.equal(await scroll.evaluate(el => el.scrollTop), scrollBefore);

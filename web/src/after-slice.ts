@@ -16,7 +16,7 @@ export function outputActions({ preference, configuredPrinters, sendAvailable, r
   ready: boolean;
   layout: 'wide' | 'compact' | 'folded';
 }): OutputActions {
-  const selected = afterSlicePreference(preference) === 'send' && configuredPrinters > 0 ? 'send' : 'export';
+  const selected = afterSlicePreference(preference) === 'send' && sendAvailable && configuredPrinters > 0 ? 'send' : 'export';
   const primary = ready ? selected : 'slice';
   const send: AfterSliceAction[] = sendAvailable ? ['send'] : [];
   if (layout === 'wide') return { primary, buttons: ['export', ...send], menu: [] };

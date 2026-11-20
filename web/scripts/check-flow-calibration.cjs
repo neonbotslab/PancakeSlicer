@@ -43,14 +43,14 @@ async function openSend(page, model, material = 'PLA') {
     const app = window.__plater;
     const state = app.getState();
     const key = state.printer;
-    const profile = state.userPresets.find((p) => p.type === 'machine' && p.id === key);
-    if (!profile || !state.job.id || !state.filamentSlots.length) throw new Error('Demo slice, printer or filament fixture missing');
+    const profile = state.records.printers.find((p) => p.id === key);
+    if (!profile || !state.job.id || !profile.slots.length) throw new Error('Demo slice, printer or filament fixture missing');
     const connection = { printer: key, id: 'flow-fixture', name: model, model, kind: 'bambu-lan', has_secret: true,
       auto_flow_calibration: model === 'H2D', host: 'fixture-printer.invalid', serial: 'FIXTURE0000' };
     const at = new Date().toISOString();
-    const status = { printer: key, online: true, state: 'idle', at, trays: [{ id: 254, ams: 254, slot: 0, type: material, color: '#d68b55' }] };
-    window.flowFixture = { jobId: state.job.id, material, connection };
-    app.setState({ userPresets: state.userPresets.map((p) => p === profile ? { ...p, name: model } : p),
+    const status = { printer: key, link: 'online', online: true, state: 'idle', at, trays: [{ id: 254, ams: 254, slot: 0, type: material, color: '#d68b55', kind: 'external' }] };
+    window.flowFixture = { jobId: state.job.id, slotId: profile.slots[0].id, material, connection };
+    app.setState({ records: { ...state.records, printers: state.records.printers.map((p) => p === profile ? { ...p, name: model } : p) },
       printerConnections: { enabled: true, live: true, transfers: [], connections: [connection], status: { [key]: status } }, appDialog: 'send' });
   }, { model, material });
   const dialog = page.getByRole('dialog', { name: 'Send to printer', exact: true });
@@ -107,6 +107,11 @@ async function capture(page, dialog, name) {
               { slot: 1, type: fixture.material, color: '#d68b55', id: '', flow: '', diameter: 0.4, object: true, support: false },
             ] }));
           }
+          if (url.pathname === `/api/jobs/${encodeURIComponent(fixture.jobId)}/send/plan`) {
+            const material = { type: fixture.material, color: '#d68b55' };
+            return Promise.resolve(Response.json({ slots: [{ filament: 1, slot: fixture.slotId, tray: 'ext', used: true,
+              state: 'confirmed', expected: material, reported: material }] }));
+          }
           const printer = encodeURIComponent(fixture.connection.printer);
           if (url.pathname === `/api/printer-slots/${printer}`) {
             return Promise.resolve(Response.json({ online: true, slots: [] }));
@@ -119,7 +124,8 @@ async function capture(page, dialog, name) {
           return fetchDemo(input, options);
         };
       });
-      await page.locator('.tabbar-actions').getByRole('button', { name: 'Slice plate', exact: true }).click();
+      const sample = await page.evaluate(async () => (await (await fetch('/api/demo/sample')).json()).project);
+      if (!page.url().endsWith(`#/p/${encodeURIComponent(sample)}`)) await page.goto(`${base.replace(/#.*$/, '')}#/p/${encodeURIComponent(sample)}`);
       await page.waitForFunction(() => {
         const job = window.__plater.getState().job;
         return job.state === 'done' && !job.stale;

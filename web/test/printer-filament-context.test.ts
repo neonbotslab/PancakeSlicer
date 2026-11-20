@@ -16,8 +16,8 @@ function match(trays: Tray[] | undefined, overrides: Partial<Parameters<typeof m
       { printer: 'other', id: 'second', name: 'Other', kind: 'bambu-lan', has_secret: true },
     ],
     status: {
-      selected: { printer: 'selected', online: true, state: 'idle', at: '', trays },
-      other: { printer: 'other', online: true, state: 'idle', at: '', trays: [external] },
+      selected: { printer: 'selected', link: 'online', online: true, state: 'idle', at: '', trays },
+      other: { printer: 'other', link: 'online', online: true, state: 'idle', at: '', trays: [external] },
     },
   };
   return matchPrinterFilaments({ printer: 'selected', connections, vendor: 'BBL', nozzleCount: 2, mode: 'Auto For Match', supported: true, ...overrides });

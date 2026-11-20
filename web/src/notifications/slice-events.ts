@@ -7,7 +7,7 @@ import { summarize } from '../flow/slice';
 import { spacedTime } from '../preview/format';
 import { plateSignature } from '../slice-input';
 import { recoverySignature } from '../flow/recovery';
-import { sliceFailure } from '../notice-text';
+import { sliceFailure } from '../notice-codes';
 import { bodyFacts, eligibleSliceOffer, projectTag, type Destination } from './policy';
 import { offerNotifications, publishNotice, setNotificationNavigator } from './browser';
 
@@ -45,13 +45,13 @@ export function beginSliceNotice(scope: SliceScope) {
         summary.grams != null && summary.grams >= 0 ? `${summary.grams.toFixed(1)} g` : undefined]),
         tag: projectTag(scope.projectId), destination: { kind: 'preview', projectId: scope.projectId, plate: scope.plate, jobId: job.id, signature: recoverySignature(job.plateSignature) } });
     },
-    failed(jobId: string | undefined, error: string) {
+    failed(jobId: string | undefined, error: string, code = 'slice_failed') {
       if (!settle()) return;
       const current = plateJob(getState(), scope.plate);
       if (current.notificationKey !== key && (!jobId || current.id !== jobId)) return;
-      setPlateJob(scope.plate, { ...current, state: 'failed', error, notificationKey: key, notificationPending: false });
-      void publishNotice({ id: key, title: 'Slice failed', body: bodyFacts([scope.file, sliceFailure(error).title.replace(/^Oops!\s*/, '')]),
-        tag: projectTag(scope.projectId), destination: { kind: 'slice-error', projectId: scope.projectId, plate: scope.plate, attempt: key, error } });
+      setPlateJob(scope.plate, { ...current, state: 'failed', error, errorCode: code, notificationKey: key, notificationPending: false });
+      void publishNotice({ id: key, title: 'Slice failed', body: bodyFacts([scope.file, sliceFailure(code).title.replace(/^Oops!\s*/, '')]),
+        tag: projectTag(scope.projectId), destination: { kind: 'slice-error', projectId: scope.projectId, plate: scope.plate, attempt: key, error, code } });
     },
   };
 }
@@ -74,7 +74,7 @@ async function navigate(destination: Destination) {
     if (project.get().context.id !== destination.projectId) return;
   }
   if (destination.kind === 'slice-error') {
-    setState({ appDialog: null, tab: 'prepare', notificationError: { attempt: destination.attempt, error: destination.error },
+    setState({ appDialog: null, tab: 'prepare', notificationError: { attempt: destination.attempt, error: destination.error, code: destination.code },
       sliceErrorExpanded: { attempt: destination.attempt, sequence: ++errorSequence } });
     return;
   }

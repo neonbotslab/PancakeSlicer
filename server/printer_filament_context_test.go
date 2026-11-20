@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
 const printerContextFixture = `{"ams_slots":[4,0],"loaded_filaments":[{"extruder":1,"type":"PETG","color":"#123abc","external":true}]}`
@@ -73,13 +75,38 @@ func TestPrinterFilamentContextMultipart(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	profiles := filepath.Join(root, "profiles")
-	for kind, preset := range map[string]string{
-		"machine":  `{"instantiation":"true","name":"Printer","printable_area":["0x0","100x0","100x100","0x100"],"printable_height":"100"}`,
-		"process":  `{"instantiation":"true","name":"Process"}`,
-		"filament": `{"instantiation":"true","name":"Filament"}`,
-	} {
-		write(filepath.Join(profiles, "BBL", kind, "fixture.json"), preset)
+	const options = `{
+		"nozzle_diameter":{"type":"Floats","profile":"machine"},
+		"printable_area":{"type":"Points","profile":"machine"},
+		"printable_height":{"type":"Float","profile":"machine"},
+		"manual_filament_change":{"type":"Bool","profile":"machine"},
+		"layer_height":{"type":"Float","profile":"process"},
+		"print_settings_id":{"type":"String","profile":"process"},
+		"printer_settings_id":{"type":"String","profile":"machine"},
+		"filament_type":{"type":"String","profile":"filament"},
+		"filament_extruder_variant":{"type":"Strings","profile":"filament"},
+		"filament_self_index":{"type":"Ints","profile":"filament"},
+		"filament_settings_id":{"type":"Strings","profile":"filament"}
+	}`
+	if err := configureResolve([]byte(options)); err != nil {
+		t.Fatal(err)
+	}
+	const header = `{"schema":"pancake.catalog.v1","version":"fixture"}` + "\n"
+	catalog, err := resolve.LoadCatalog(
+		strings.NewReader(header+`{"id":"Fixture","vendor":"BBL","base":{"nozzle_diameter":"0.4","printable_area":"0x0,100x0,100x100,0x100","printable_height":"100"},"variants":[{"id":"Printer","nozzle":"0.4","extruders":1}]}`),
+		strings.NewReader(header+`{"id":"Filament","base":{"filament_type":"PLA"}}`),
+		strings.NewReader(header+`{"id":"Process","base":{"layer_height":"0.2"}}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := emptyLibrary("")
+	doc["printers"] = json.RawMessage(`[{"id":"profile:printer","name":"Printer","revision":1,"vendor":"BBL","model":"Fixture","nozzles":[{"variant":"Printer","diameter":0.4}],"swap":"manual","slots":[{"id":"slot:filament","filament":"profile:filament"}]}]`)
+	doc["processes"] = json.RawMessage(`[{"id":"profile:process","name":"Process","revision":1,"product":"Process"}]`)
+	doc["filaments"] = json.RawMessage(`[{"id":"profile:filament","name":"Filament","revision":1,"product":"Filament"}]`)
+	library := &libraryStore{dir: root, catalog: catalog, settled: true}
+	if err := library.write(&libraryEnvelope{Document: doc, Operations: map[string]libraryReceipt{}}); err != nil {
+		t.Fatal(err)
 	}
 	blobs := &blobStore{root: filepath.Join(root, "blobs")}
 	const model = "solid fixture\nfacet normal 0 0 1\nouter loop\nvertex 5 5 0\nvertex 10 5 0\nvertex 5 10 0\nendloop\nendfacet\nendsolid fixture\n"
@@ -87,13 +114,13 @@ func TestPrinterFilamentContextMultipart(t *testing.T) {
 	digest := hex.EncodeToString(sum[:])
 	write(blobs.path(digest), model)
 	manager := &JobManager{cfg: Config{JobRoot: filepath.Join(root, "jobs"), MaxQueue: -1}, jobs: map[string]*Job{}, uploads: map[string]*Job{}}
-	server := &Server{cfg: Config{MaxUploadSize: 1 << 20}, jobs: manager, presets: NewPresetIndex(profiles), blobs: blobs}
+	server := &Server{cfg: Config{MaxUploadSize: 1 << 20}, jobs: manager, catalog: catalog, library: library, blobs: blobs}
 	submit := func(context ...string) *httptest.ResponseRecorder {
 		t.Helper()
 		var body strings.Builder
 		form := multipart.NewWriter(&body)
 		for key, value := range map[string]string{
-			"vendor": "BBL", "printer": "Printer", "process": "Process", "filament[]": "Filament", "output": "gcode.3mf",
+			"library": `{"printer":"profile:printer","print":"profile:process","filaments":["profile:filament"],"slots":["slot:filament"]}`, "output": "gcode.3mf",
 			"files": `[{"name":"fixture.stl","sha256":"` + digest + `"}]`,
 		} {
 			if err := form.WriteField(key, value); err != nil {
@@ -120,7 +147,7 @@ func TestPrinterFilamentContextMultipart(t *testing.T) {
 	if response := submit(); response.Code != 202 {
 		t.Fatalf("ordinary slice failed on old engine: %d %s", response.Code, response.Body)
 	}
-	server.cfg.Features.PrinterFilamentContext = true
+	server.cfg.Engine.PrinterFilamentContext = true
 	if response := submit(""); response.Code != 400 {
 		t.Fatalf("empty inventory was accepted: %d %s", response.Code, response.Body)
 	}

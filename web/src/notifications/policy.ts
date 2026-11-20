@@ -1,6 +1,6 @@
 export type Destination =
   | { kind: 'preview'; projectId: string; plate: number; jobId: string; signature: string }
-  | { kind: 'slice-error'; projectId: string; plate: number; attempt: string; error: string }
+  | { kind: 'slice-error'; projectId: string; plate: number; attempt: string; error: string; code?: string }
   | { kind: 'device'; printer: string }
   | { kind: 'focus' };
 
@@ -55,7 +55,8 @@ export function validateDestination(value: unknown): Destination | null {
     return { kind: 'preview', projectId, plate, jobId: value.jobId, signature: value.signature };
   }
   if (value.kind === 'slice-error' && 'attempt' in value && isId(value.attempt) && 'error' in value && typeof value.error === 'string') {
-    return { kind: 'slice-error', projectId, plate, attempt: value.attempt, error: value.error };
+    return { kind: 'slice-error', projectId, plate, attempt: value.attempt, error: value.error,
+      ...('code' in value && typeof value.code === 'string' ? { code: value.code } : {}) };
   }
   return null;
 }

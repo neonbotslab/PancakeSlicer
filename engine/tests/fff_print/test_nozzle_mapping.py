@@ -50,6 +50,22 @@ class NozzleMapping(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         cls.addClassCleanup(directory.cleanup)
         cls.directory = Path(directory.name)
+        cls.catalog = cls.directory / "catalog"
+        result = subprocess.run(
+            [cls.tool, "--profiles", cls.profiles, "--datadir", cls.directory / "data",
+             "--flatten-catalog", cls.catalog],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode != 0:
+            raise AssertionError(f"Catalog generation exited {result.returncode}\n{result.stdout}\n{result.stderr}")
+        cls.profile_ids = {}
+        for kind in ("prints", "filaments"):
+            with (cls.catalog / f"{kind}.jsonl").open(encoding="utf-8") as records:
+                next(records)
+                for line in records:
+                    product = json.loads(line)
+                    for tuning in product["tunings"]:
+                        cls.profile_ids[tuning["source"]["name"]] = product["id"]
         cube = cls.directory / "cube.obj"
         cube.write_text(CUBE)
         first = dict(file=str(cube), extruder=1, x=140, y=140, plate=1)
@@ -71,10 +87,15 @@ class NozzleMapping(unittest.TestCase):
 
     @classmethod
     def run_tool(cls, *arguments, success=True):
+        arguments = list(arguments)
+        for index, value in enumerate(arguments[:-1]):
+            if value == "--filament":
+                arguments[index + 1] = cls.profile_ids[arguments[index + 1]]
         command = [
             cls.tool, "--profiles", cls.profiles, "--datadir", cls.directory / "data",
-            "--vendor", "BBL", "--printer", "Bambu Lab H2D 0.4 nozzle",
-            "--process", "0.20mm Standard @BBL H2D", "--filament", "Generic PLA @BBL H2D",
+            "--catalog", cls.catalog, "--printer", "Bambu Lab H2D 0.4 nozzle",
+            "--process", cls.profile_ids["0.20mm Standard @BBL H2D"],
+            "--filament", cls.profile_ids["Generic PLA @BBL H2D"],
             *settings(nonplanar_mode="off", enable_prime_tower=0),
             *arguments,
         ]

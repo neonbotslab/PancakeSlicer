@@ -289,7 +289,7 @@ func bambuTunnelUpload(ctx context.Context, host string, config *tls.Config, u *
 		return "", err
 	}
 	if *ability.Result != 0 {
-		return "", fmt.Errorf("the printer declined the storage query (result %d)", *ability.Result)
+		return "", &connError{"storage", fmt.Sprintf("the printer declined the storage query (result %d)", *ability.Result)}
 	}
 	var media struct {
 		Storage []string `json:"storage"`
@@ -297,7 +297,7 @@ func bambuTunnelUpload(ctx context.Context, host string, config *tls.Config, u *
 	}
 	if err := json.Unmarshal(ability.Reply, &media); err != nil {
 		if err := json.Unmarshal(ability.Reply, &media.Storage); err != nil {
-			return "", errors.New("the printer returned invalid storage capabilities")
+			return "", &connError{"storage", "the printer returned invalid storage capabilities"}
 		}
 	}
 	storage := media.Upload
@@ -315,7 +315,7 @@ func bambuTunnelUpload(ctx context.Context, host string, config *tls.Config, u *
 		return "", err
 	}
 	if *init.Result != 1 && *init.Result != 19 {
-		return "", fmt.Errorf("the printer could not create the file in internal storage (result %d)", *init.Result)
+		return "", &connError{"storage", fmt.Sprintf("the printer could not create the file in internal storage (result %d)", *init.Result)}
 	}
 	var chunk struct {
 		Size   int   `json:"chunk_size"`
@@ -367,7 +367,7 @@ func bambuTunnelUpload(ctx context.Context, host string, config *tls.Config, u *
 			continue
 		}
 		if *complete.Result != 0 {
-			return "", fmt.Errorf("the printer could not finish writing to internal storage (result %d)", *complete.Result)
+			return "", &connError{"storage", fmt.Sprintf("the printer could not finish writing to internal storage (result %d)", *complete.Result)}
 		}
 		return "brtc://emmc/" + u.filename, nil
 	}

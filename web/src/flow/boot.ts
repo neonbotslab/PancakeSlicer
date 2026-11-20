@@ -4,7 +4,6 @@ import { plateSignature } from '../slice-input';
 import { followJob, job, jobTerminal, type TrackedJob } from './job';
 import { project } from './project';
 import { probeEngine } from './engine-health';
-import { startProfileEdits } from './profile-edit';
 import { initialiseRecovery, readRecovery, recoverySignature, rememberRecovery } from './recovery';
 import { restorePrinterSend, printerSend } from './transfer';
 import { startSliceTracking } from './slice';
@@ -14,16 +13,16 @@ let adoptTracking = () => {};
 let cancelNotification = () => {};
 let started = false, active: ReturnType<typeof followJob> | null = null;
 export async function retryTrackedJob() {
-  try { adoptTracking(); await active?.retry(); } catch (e) { toast(e instanceof Error ? e.message : 'Retry failed'); }
+  try { adoptTracking(); await active?.retry(); } catch (e) { toast('job_retry_failed', { detail: e instanceof Error ? e.message : '' }); }
 }
 export async function cancelTrackedJob() {
   cancelNotification();
-  try { await active?.cancel(); } catch (e) { toast(e instanceof Error ? e.message : 'Cancel failed'); }
+  try { await active?.cancel(); } catch (e) { toast('job_cancel_failed', { detail: e instanceof Error ? e.message : '' }); }
 }
 export async function startFlows() {
   if (started) return;
   started = true;
-  try { await initialiseRecovery(); } catch (error) { started = false; toast(error instanceof Error ? error.message : 'Oops! Couldn\'t load the recovery files for this project.'); return; }
+  try { await initialiseRecovery(); } catch (error) { started = false; toast('recovery_load_failed', { detail: error instanceof Error ? error.message : '' }); return; }
   const { beginSliceNotice } = await import('../notifications/slice-events');
   const recovery = readRecovery();
   let seenId: string | undefined, generation = documentGeneration();
@@ -70,11 +69,11 @@ export async function startFlows() {
       failed: (message, status) => {
         if (!current()) return;
         if (recovering) {
-          setState((s) => ({ job: { ...s.job, state: 'failed', error: message } }));
-          if (status?.state === 'failed') notification?.failed(status.id, message);
+          setState((s) => ({ job: { ...s.job, state: 'failed', error: message, errorCode: status?.error_code } }));
+          if (status?.state === 'failed') notification?.failed(status.id, message, status.error_code);
           else notification?.cancel();
         }
-        toast(message, { label: 'Retry', run: () => void retryTrackedJob() }, 15_000);
+        toast('tracked_job_failed', { detail: message }, { action: { label: 'Retry', run: () => void retryTrackedJob() } });
       },
     });
   };
@@ -94,12 +93,10 @@ export async function startFlows() {
     if (s.job.id === job.get().context.job?.id) {
       if (s.job.state === 'canceled') void cancelTrackedJob();
       if (s.job.stale && job.get().value === 'done' && s.job.status)
-        job.send({ type: 'STATUS', status: { ...s.job.status, state: 'stale' } });
+        job.send({ type: 'STATUS', status: { ...s.job.status, lifecycle_state: 'stale' } });
     }
   };
   subscribeStore(observe); observe();
-  project.subscribe(({ context }) => rememberRecovery({ projectId: context.id }));
-  rememberRecovery({ projectId: project.get().context.id });
   onLeaveDocument(() => {
     if (active && !jobTerminal(job.get().value)) void active.cancel().catch(() => {});
     active?.stop(); active = null; seenId = undefined;
@@ -107,5 +104,5 @@ export async function startFlows() {
     rememberRecovery({ job: undefined, send: undefined });
     printerSend.reset(); loadSource(null);
   });
-  startSliceTracking(); startProfileEdits(); restorePrinterSend(); void probeEngine();
+  startSliceTracking(); restorePrinterSend(); void probeEngine();
 }

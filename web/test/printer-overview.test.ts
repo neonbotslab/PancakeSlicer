@@ -6,7 +6,7 @@ import { overviewStatus } from '../src/printers/overview-status.ts';
 const at = '2026-11-19T15:12:00Z';
 
 function report(state: PrinterStatus['state'], fields: Partial<PrinterStatus> = {}): PrinterStatus {
-  return { printer: 'workshop', online: true, state, at, ...fields };
+  return { printer: 'workshop', link: 'online', online: true, state, at, ...fields };
 }
 
 test('active jobs carry a filename and compact progress with remaining time', () => {

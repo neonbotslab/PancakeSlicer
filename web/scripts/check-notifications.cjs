@@ -2,20 +2,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE ?? 'playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const root = path.resolve(__dirname, '..');
 const [base, output] = process.argv.slice(2);
-if (!base || !output) throw new Error('Usage: npm run test:browser -- <demo-url> <output-directory>');
+if (!base || !output) throw new Error('Usage: npm run test:browser -- <local-3DBenchy-project-url> <output-directory>');
+const origin = new URL(base).origin;
+if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(base).hostname)) throw new Error('This check needs a local PancakeSlicer service.');
 fs.mkdirSync(output, { recursive: true });
 (async () => {
   const browser = await chromium.launch({ headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const context = await browser.newContext({ viewport: { width: 1360, height: 900 } });
-  await context.route('**/api/**', route => route.abort());
-  await context.route(/\.gz(?:\?|$)/, async route => {
-    const name = new URL(route.request().url()).pathname.split('/').pop();
-    const file = path.join(root, 'dist-demo/assets', name);
-    if (fs.existsSync(file)) await route.fulfill({ body: fs.readFileSync(file), contentType: 'application/octet-stream' });
-    else await route.continue();
-  });
+  await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
   await context.addInitScript(() => {
     window.notifyPermission = 'default';
     window.notifyHidden = false;
@@ -29,11 +24,13 @@ fs.mkdirSync(output, { recursive: true });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(base);
-  await page.waitForFunction(() => window.__plater && window.__plater.getState().profileLibraryLoad.state === 'ready');
+  await page.waitForFunction(() => window.__plater?.getState().objects.some((object) => /3DBenchy/i.test(object.name)));
   assert.deepEqual(await page.evaluate(() => window.notifyPrompts), []);
   await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
   await page.evaluate(() => { window.notifyHidden = true; document.dispatchEvent(new Event('visibilitychange')); });
   await page.getByText('Get notified when slicing finishes in another tab?', { exact: true }).waitFor({ timeout: 30000 });
+  const fixture = await page.evaluate(() => window.__plater.getState().job.status);
+  assert.equal(fixture.state, 'done');
   await page.evaluate(() => { window.notifyHidden = false; document.dispatchEvent(new Event('visibilitychange')); });
   const readyCard = await page.locator('.notification-offer').evaluateHandle(offer => offer.closest('.notification'));
   const toastLayout = await page.locator('.notification-offer').evaluate(offer => {
@@ -77,19 +74,13 @@ fs.mkdirSync(output, { recursive: true });
   assert.equal(await setting.isDisabled(), true);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ screenshots: fs.readdirSync(output), permissionRequests: await page.evaluate(() => window.notifyPrompts), toastLayout, readyLayout, blockedLayout, insecureLayout, errors }));
-  await checkLifecycle(browser);
+  await checkLifecycle(browser, fixture);
   await browser.close();
 })().catch(error => { console.error(error); process.exit(1); });
 
-async function checkLifecycle(browser) {
-  const fixture = JSON.parse(require('node:zlib').gunzipSync(fs.readFileSync(path.join(root, 'src/demo/fixtures/benchy-flat-020.status.json.gz'))));
+async function checkLifecycle(browser, fixture) {
   const context = await browser.newContext({ viewport: { width: 1360, height: 900 } });
-  await context.route('**/api/**', route => route.abort());
-  await context.route(/\.gz(?:\?|$)/, async route => {
-    const file = path.join(root, 'dist-demo/assets', new URL(route.request().url()).pathname.split('/').pop());
-    if (fs.existsSync(file)) await route.fulfill({ body: fs.readFileSync(file), contentType: 'application/octet-stream' });
-    else await route.continue();
-  });
+  await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
   await context.addInitScript(() => {
     window.notifyHidden = false;
     window.notifyMessages = [];
@@ -108,21 +99,22 @@ async function checkLifecycle(browser) {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(base);
-  await page.waitForFunction(() => window.__plater && window.__plater.getState().profileLibraryLoad.state === 'ready');
+  await page.waitForFunction(() => window.__plater?.getState().objects.some((object) => /3DBenchy/i.test(object.name)));
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Slice plate' && !button.disabled));
-  await page.evaluate(() => {
+  await page.evaluate((sourceJob) => {
     const original = window.__plater.getState().api;
     let serial = 0;
     window.testStatus = { id: 'fixture-job', state: 'slicing' };
     window.__plater.setState({ api: {
       ...original,
+      mock: true,
       submit: async () => `fixture-job-${++serial}`,
       events: (id, handlers) => { window.testHandlers = handlers; window.testStatus = { id, state: 'slicing' }; return () => {}; },
       status: async () => window.testStatus,
-      movesUrl: () => original.movesUrl('demo-benchy-flat-020-fixture'),
+      movesUrl: () => original.movesUrl(sourceJob),
       cancel: async () => {},
     } });
-  });
+  }, fixture.id);
   await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
   await page.waitForFunction(() => !!window.testHandlers);
   await page.evaluate(f => window.testHandlers.result({ ...f, id: window.testStatus.id, state: 'slicing' }), fixture);
@@ -153,7 +145,7 @@ async function checkLifecycle(browser) {
     window.notifyHidden = true;
     document.dispatchEvent(new Event('visibilitychange'));
     window.testStatus = { id: window.testStatus.id, state: 'failed', error: 'bad_alloc\nstack trace detail' };
-    window.testHandlers.error(window.testStatus.error, window.testStatus);
+    window.testHandlers.error(window.testStatus.error, 'slice_failed', window.testStatus);
   });
   await page.waitForFunction(() => window.notifyMessages.length === 2);
   assert.equal(await page.evaluate(() => window.notifyMessages[1].title), 'Slice failed');

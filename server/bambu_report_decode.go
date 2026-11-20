@@ -45,51 +45,61 @@ func newBambuReportField(typ reflect.Type) *bambuReportField {
 }
 
 func decodeBambuReport(state map[string]any, payload []byte) *bambuReport {
-	report, _ := decodeBambuReportUpdate(state, payload)
+	report, _, _ := decodeBambuReportUpdate(state, payload)
 	return report
 }
 
-func decodeBambuReportUpdate(state map[string]any, payload []byte) (*bambuReport, string) {
+func decodeBambuReportUpdate(state map[string]any, payload []byte) (*bambuReport, bambuHeard, string) {
 	if payload == nil {
-		return nil, ""
+		return nil, bambuHeard{}, ""
 	}
 	var message struct {
 		Print json.RawMessage `json:"print"`
 	}
 	if json.Unmarshal(payload, &message) != nil {
-		return nil, "invalid_json"
+		return nil, bambuHeard{}, "invalid_json"
 	}
 	if len(message.Print) == 0 || string(message.Print) == "null" {
-		return nil, ""
+		return nil, bambuHeard{}, ""
 	}
 	var delta map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(message.Print))
 	decoder.UseNumber()
 	if decoder.Decode(&delta) != nil {
-		return nil, "invalid_print"
+		return nil, bambuHeard{}, "invalid_print"
 	}
 
 	var issue string
 	filtered, keep := filterBambuReportValue(delta, bambuReportFields, "", &issue)
 	if !keep {
-		return nil, issue
+		return nil, bambuHeard{}, issue
 	}
 	delta = filtered.(map[string]any)
 	candidate := maps.Clone(state)
 	mergeReport(candidate, delta)
 	raw, err := json.Marshal(candidate)
 	if err != nil {
-		return nil, "invalid_print"
+		return nil, bambuHeard{}, "invalid_print"
 	}
 	var report bambuReport
 	if json.Unmarshal(raw, &report) != nil {
-		return nil, "invalid_print"
+		return nil, bambuHeard{}, "invalid_print"
 	}
 
 	pruneAbsentBambuInventory(candidate)
 	clear(state)
 	maps.Copy(state, candidate)
-	return &report, issue
+	heard := bambuHeard{full: delta["msg"] == json.Number("0")}
+	if ams, ok := delta["ams"].(map[string]any); ok {
+		_, heard.trays = ams["ams"].([]any)
+	}
+	if command, _ := delta["command"].(string); command != "" && command != "push_status" {
+		echo := new(bambuEcho)
+		if json.Unmarshal(message.Print, echo) == nil {
+			heard.echo = echo
+		}
+	}
+	return &report, heard, issue
 }
 
 func filterBambuReportValue(value any, field *bambuReportField, path string, issue *string) (any, bool) {

@@ -3,6 +3,7 @@ import { AFTER_SLICE_PREFERENCE, afterSlicePreference, type AfterSliceAction } f
 import { FLOW_CALIBRATION_OPTIONS, FLOW_CALIBRATION_PREFERENCE, flowCalibrationPreference } from '../flow-calibration';
 import { preloadable } from '../preloadable';
 import { Check } from './Check';
+import { Dropdown } from './Dropdown';
 import { Suspense, useState, useSyncExternalStore } from 'react';
 import { markStale, setState, useStore } from '../state/store';
 import { setThemePref, subscribeTheme, themePref, type ThemePref } from '../theme';
@@ -16,7 +17,6 @@ const About = preloadable(() => import('./About'));
 const PlateSettings = preloadable(() => import('./PlateSettings'));
 const CloneDialog = preloadable(() => import('./CloneDialog'));
 const SimplifyDialog = preloadable(() => import('./SimplifyDialog'));
-const FilamentsDialog = preloadable(() => import('./FilamentsDialog'));
 const ObjectTable = preloadable(() => import('./ObjectTable'));
 const CreatePrinter = preloadable(() => import('./CreatePrinter'));
 const SendDialog = preloadable(() => import('./SendDialog'));
@@ -45,7 +45,6 @@ function Preferences() {
   const camera = useSyncExternalStore(subscribeCamera, cameraPrefsSnapshot);
   const developerMode = useStore((s) => s.developerMode);
   const mixed = useStore((s) => s.mixedTemperatures);
-  const canMix = useStore((s) => !!s.features.mixed_temperatures);
   const afterSlice = afterSlicePreference(usePreference(AFTER_SLICE_PREFERENCE));
   const flowCalibration = flowCalibrationPreference(usePreference(FLOW_CALIBRATION_PREFERENCE));
   const hasConfiguredPrinter = useStore((s) => s.printerConnections.connections.length > 0);
@@ -58,12 +57,10 @@ function Preferences() {
     <Modal size="m" label="Preferences" onClose={close}>
       <ModalTitle title="Preferences" onClose={close} />
       <ModalBody className="modal-fields">
-        <div className="form-row"><span>Theme</span><span className="seg" role="radiogroup" aria-label="Theme">{THEMES.map(([value, label]) =>
-          <button key={value} type="button" role="radio" aria-checked={pref === value} data-autofocus={pref === value ? '' : undefined} onClick={() => setThemePref(value)}>{label}</button>)}</span></div>
+        <div className="form-row"><span>Theme</span><Dropdown className="combo" aria-label="Theme" value={pref} onValueChange={(next) => setThemePref(next as typeof pref)} options={THEMES.map(([value, label]) => ({ value, label }))} /></div>
         <h3 className="modal-group">Camera</h3>
         <div className="form-row"><span>Mouse controls<InfoTip label="Mouse controls">{'Default: Left-drag to rotate, right- or middle-drag to pan.\nTouchpad: Alt+drag to rotate, Shift+drag to pan.'}</InfoTip></span>
-          <span className="seg" role="radiogroup" aria-label="Camera style">{(['default', 'touchpad'] as const).map((value) =>
-            <button key={value} type="button" role="radio" aria-checked={camera.style === value} onClick={() => setCameraPrefs({ style: value as CameraPrefs['style'] })}>{value === 'default' ? 'Default' : 'Touchpad'}</button>)}</span></div>
+          <Dropdown className="combo" aria-label="Camera style" value={camera.style} onValueChange={(next) => setCameraPrefs({ style: next as CameraPrefs['style'] })} options={[{ value: 'default', label: 'Default' }, { value: 'touchpad', label: 'Touchpad' }]} /></div>
         <label className="form-row"><span>Orbit speed</span>
           <input className="text num" type="number" min={0.05} max={2} step={0.05} value={camera.orbitMult}
             onChange={(e) => { const v = Number(e.target.value); if (v >= 0.05 && v <= 2) setCameraPrefs({ orbitMult: v }); }} /></label>
@@ -94,7 +91,7 @@ function Preferences() {
         </div>
         <h3 className="modal-group">Advanced</h3>
         <label className="modal-check"><Check checked={developerMode} onCheckedChange={(next) => setDeveloperMode(next)} />Developer mode</label>
-        {canMix && <label className="modal-check"><Check checked={mixed} onCheckedChange={(next) => setMixedTemperatures(next)} />Allow mixed filament temperatures</label>}
+        <label className="modal-check"><Check checked={mixed} onCheckedChange={(next) => setMixedTemperatures(next)} />Allow mixed filament temperatures</label>
       </ModalBody>
       <ModalFooter><button type="button" className="btn-primary" onClick={close}>Close</button></ModalFooter>
     </Modal>
@@ -173,11 +170,10 @@ function Shortcuts() {
   );
 }
 
-export default function AppDialog({ which }: { which: 'about' | 'preferences' | 'shortcuts' | 'send' | 'setup' | 'what' | 'plate' | 'clone' | 'simplify' | 'filaments' | 'objectTable' | 'createPrinter' | 'mixed' }) {
+export default function AppDialog({ which }: { which: 'about' | 'preferences' | 'shortcuts' | 'send' | 'setup' | 'what' | 'plate' | 'clone' | 'simplify' | 'objectTable' | 'createPrinter' | 'mixed' }) {
   if (which === 'mixed') return <Suspense fallback={null}><MixedFilaments close={close} /></Suspense>;
   if (which === 'createPrinter') return <Suspense fallback={null}><CreatePrinter close={close} /></Suspense>;
   if (which === 'objectTable') return <Suspense fallback={null}><ObjectTable close={close} /></Suspense>;
-  if (which === 'filaments') return <Suspense fallback={null}><FilamentsDialog close={close} /></Suspense>;
   if (which === 'simplify') return <Suspense fallback={null}><SimplifyDialog close={close} /></Suspense>;
   if (which === 'clone') return <Suspense fallback={null}><CloneDialog close={close} /></Suspense>;
   if (which === 'plate') return <Suspense fallback={null}><PlateSettings close={close} /></Suspense>;

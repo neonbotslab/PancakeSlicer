@@ -1,4 +1,5 @@
 import { useStore } from '../state/store';
+import { SEP } from '../separator';
 import { openDevice } from './sendOutcome';
 import { statusLine } from './connections';
 import { printerModel } from './capabilities';
@@ -25,7 +26,7 @@ export function PrintingChip() {
       if (!st?.online || (st.state !== 'printing' && st.state !== 'paused')) return [];
       const model = c.kind.startsWith('bambu') && c.model && c.model !== '?' ? `Bambu Lab ${c.model}` : printerModel(s, c.printer);
       const named = c.name && c.name !== model && c.name !== c.model ? c.name : '';
-      return [{ id: c.id, printer: c.printer, short: shortName(model || c.name), mark: '', name: named, detail: `${named ? `${named} · ` : ''}${model || c.name}: ${statusLine(st)}`,
+      return [{ id: c.id, printer: c.printer, short: shortName(model || c.name), mark: '', name: named, detail: `${named ? `${named}${SEP}` : ''}${model || c.name}: ${statusLine(st)}`,
         paused: st.state === 'paused', progress: st.progress ?? 0 }];
     });
     for (const j of list) {

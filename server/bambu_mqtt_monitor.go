@@ -40,7 +40,7 @@ func bambuSessionReason(err error) string {
 	return "connection_error"
 }
 
-func monitorBambu(ctx context.Context, p *PrinterConfig, secret string, publish func(PrinterStatus)) (err error) {
+func monitorBambu(ctx context.Context, p *PrinterConfig, secret string, publish func(PrinterStatus), heard func(bambuHeard)) (err error) {
 	began := time.Now()
 	bambuSessionLog.Info("bambu_mqtt_session_start", "printer", p.Name)
 	defer func() {
@@ -54,7 +54,7 @@ func monitorBambu(ctx context.Context, p *PrinterConfig, secret string, publish 
 	if err != nil {
 		return err
 	}
-	return monitorBambuConn(ctx, conn, r, p, bambuSessionLog, publish)
+	return monitorBambuConn(ctx, conn, r, p, bambuSessionLog, publish, heard)
 }
 
 type mqttReadResult struct {
@@ -62,7 +62,7 @@ type mqttReadResult struct {
 	err    error
 }
 
-func monitorBambuConn(ctx context.Context, conn net.Conn, r *bufio.Reader, p *PrinterConfig, logger *slog.Logger, publish func(PrinterStatus)) error {
+func monitorBambuConn(ctx context.Context, conn net.Conn, r *bufio.Reader, p *PrinterConfig, logger *slog.Logger, publish func(PrinterStatus), heard func(bambuHeard)) error {
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		conn.Close()
 		if ctx.Err() != nil {
@@ -191,7 +191,7 @@ func monitorBambuConn(ctx context.Context, conn net.Conn, r *bufio.Reader, p *Pr
 				if payload == nil {
 					return &connError{"mqtt_packet", "malformed MQTT report packet"}
 				}
-				report, issue := decodeBambuReportUpdate(state, payload)
+				report, event, issue := decodeBambuReportUpdate(state, payload)
 				if issue != "" && !loggedIssues[issue] {
 					logger.Warn("bambu_mqtt_decode_error", "printer", p.Name, "reason", issue)
 					loggedIssues[issue] = true
@@ -201,11 +201,21 @@ func monitorBambuConn(ctx context.Context, conn net.Conn, r *bufio.Reader, p *Pr
 				}
 				if report.State != "" {
 					statusRetryAt, statusDeadline = time.Time{}, time.Time{}
-					publish(report.status())
+					status := report.status()
+					publish(status)
+					event.status = &status
 				} else if statusDeadline.IsZero() {
 					now := time.Now()
 					statusRetryAt = now.Add(bambuStatusRetry)
 					statusDeadline = now.Add(bambuStatusTimeout)
+				}
+				if heard != nil {
+					if event.status != nil {
+						event.state = event.status.Trays
+					} else {
+						event.state = report.trays()
+					}
+					heard(event)
 				}
 			}
 		}

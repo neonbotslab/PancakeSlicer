@@ -56,3 +56,10 @@
 :where(.orca-parity) .notification-setting-note { margin: 0; margin-inline-start: calc(16px + var(--s-3)); color: var(--muted); font: var(--t-small); }
 :where(.orca-parity) .default-setting { display: grid; gap: 4px; }
 :where(.orca-parity) .default-setting-note { margin-inline-start: 0; }
+
+:where(.orca-parity) .notice-log { align-self: flex-end; max-width: 100%; }
+:where(.orca-parity) .notice-log > summary { display: inline-flex; align-items: center; min-height: var(--h-compact); padding: 0 var(--s-3); border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel); color: var(--ink-3); font: var(--t-small); cursor: pointer; list-style: none; }
+:where(.orca-parity) .notice-log > summary::-webkit-details-marker { display: none; }
+:where(.orca-parity) .notice-log[open] > summary { color: var(--ink); }
+:where(.orca-parity) .notice-log > ol { margin: var(--s-2) 0 0; padding: var(--s-2) var(--s-3) var(--s-2) var(--s-6); max-height: 200px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel); font: var(--t-small); color: var(--ink-2); }
+@media (pointer: coarse), (hover: none) { :where(.orca-parity) .notice-log > summary { min-height: 44px; min-width: 44px; justify-content: center; } }

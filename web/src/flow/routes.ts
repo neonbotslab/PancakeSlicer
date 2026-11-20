@@ -18,6 +18,8 @@ function parseRoute(): ProjectRoute {
     return match[1] === 'device' ? { kind: 'device', printer: key } : { kind: 'project', id: key };
   } catch { return { kind: 'missing' }; }
 }
+export const urlRoute = (): ProjectRoute => parseRoute();
+export const urlProject = (): string | null => { const r = parseRoute(); return r.kind === 'project' ? r.id : null; };
 export function writeRoute(path: string, replace = false) {
   const href = `${hashed() ? '#' : ''}${path}`;
   const current = hashed() ? location.hash : location.pathname;
