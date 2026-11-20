@@ -2840,8 +2840,9 @@ void arrange_only(const Args &args, Model &model, const DynamicPrintConfig &conf
     int plates = 0, unplaced = 0;
     for (size_t o = 0; o < model.objects.size(); ++o)
         out["objects"].push_back({ { "index", o }, { "name", model.objects[o]->name }, { "instances", nlohmann::json::array() } });
-    for (const arrangement::ArrangePolygon &item : items) {
-        ModelInstance *instance = instances[size_t(item.itemid)];
+    for (size_t source_index = 0; source_index < items.size(); ++source_index) {
+        const arrangement::ArrangePolygon& item = items[source_index];
+        ModelInstance* instance                 = instances[source_index];
         ModelObject   *object   = instance->get_object();
         const size_t   o = std::find(model.objects.begin(), model.objects.end(), object) - model.objects.begin();
         const size_t   i = std::find(object->instances.begin(), object->instances.end(), instance) - object->instances.begin();
