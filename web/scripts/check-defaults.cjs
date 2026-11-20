@@ -165,8 +165,9 @@ async function outputState(page, expected, width) {
     dialog = await preferences(page, 'Send to printer');
     assert.equal(await dialog.getByText(noteText, { exact: true }).count(), 0);
     await closePreferences(dialog);
-    await page.keyboard.press('Control+e');
-    await page.getByText('Not available in demo mode', { exact: true }).waitFor();
+    await page.waitForFunction(() => !document.activeElement?.closest('[role="dialog"]'));
+    await page.keyboard.press('Control+g');
+    await page.getByRole('alert').getByText('Not available in demo mode', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__plater.getState().appDialog), null);
     await page.setViewportSize({ width: 1000, height: 900 });
     await page.locator('.tabbar-actions').getByRole('button', { name: 'Send to printer', exact: true }).click();
