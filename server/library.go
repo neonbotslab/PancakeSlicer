@@ -59,10 +59,11 @@ func (l *libraryStore) wait() <-chan struct{} {
 }
 
 type libraryEnvelope struct {
-	Document   map[string]json.RawMessage `json:"document"`
-	Operations map[string]libraryReceipt  `json:"operations"`
-	Migrations []libraryMigration         `json:"migrations,omitempty"`
-	Writer     *libraryWriter             `json:"writer,omitempty"`
+	Document   map[string]json.RawMessage    `json:"document"`
+	Operations map[string]libraryReceipt     `json:"operations"`
+	Migrations []libraryMigration            `json:"migrations,omitempty"`
+	Writer     *libraryWriter                `json:"writer,omitempty"`
+	History    map[string][]settingsRevision `json:"history,omitempty"`
 }
 
 type libraryWriter struct {
@@ -188,21 +189,28 @@ func printCatalog() []map[string]any {
 	return out
 }
 
-func (l *libraryStore) read() (*libraryEnvelope, error) {
-	path := filepath.Join(l.dir, libraryFile)
-	raw, err := os.ReadFile(path)
+func (l *libraryStore) readEnvelope() (*libraryEnvelope, []byte, error) {
+	raw, err := os.ReadFile(filepath.Join(l.dir, libraryFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return &libraryEnvelope{Document: emptyLibrary(""), Operations: map[string]libraryReceipt{}}, nil
-	}
-	var e libraryEnvelope
-	if err == nil {
-		err = json.Unmarshal(raw, &e)
-	}
-	if err == nil && (e.Document == nil || e.Operations == nil) {
-		err = errors.New("Oops! Stored profile library data is invalid.")
+		return &libraryEnvelope{Document: emptyLibrary(""), Operations: map[string]libraryReceipt{}}, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	var e libraryEnvelope
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, nil, err
+	}
+	if e.Document == nil || e.Operations == nil {
+		return nil, nil, errors.New("Oops! Stored profile library data is invalid.")
+	}
+	return &e, raw, nil
+}
+
+func (l *libraryStore) read() (*libraryEnvelope, error) {
+	e, raw, err := l.readEnvelope()
+	if err != nil || raw == nil {
+		return e, err
 	}
 	var schema int
 	json.Unmarshal(e.Document["schema"], &schema)
@@ -213,12 +221,12 @@ func (l *libraryStore) read() (*libraryEnvelope, error) {
 		l.settled = true
 	}
 	if schema < librarySchema {
-		err = l.upgrade(&e, raw, schema)
+		err = l.upgrade(e, raw, schema)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("Uh-oh, we couldn't upgrade the profile library: %w", err)
 	}
-	return &e, nil
+	return e, nil
 }
 
 func foldFilaments(doc map[string]json.RawMessage, catalog *resolve.Catalog) ([]string, error) {
@@ -1013,99 +1021,19 @@ func (s *Server) libraryRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("PUT /api/library", func(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
-		var in struct {
-			OperationID      string                     `json:"operationId"`
-			ExpectedRevision uint64                     `json:"expectedRevision"`
-			Document         map[string]json.RawMessage `json:"document"`
-		}
+		var in librarySettingsWrite
 		if err != nil || json.Unmarshal(raw, &in) != nil || in.OperationID == "" || len(in.OperationID) > 200 || in.Document == nil {
 			libraryFailure(w, 400, "library_invalid", "operationId, expectedRevision and a complete document are required.", "reload", 0)
 			return
 		}
-		digest := workspaceDigest([]any{in.ExpectedRevision, in.Document})
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		e, err := l.read()
-		if err != nil {
-			libraryFailure(w, 503, "library_unavailable", "Oops! Couldn't read the stored library, so nothing was changed.", "retry_storage", 0)
+		result, failure := s.applyLibrarySettings(in, func(doc map[string]json.RawMessage) {
+			s.reconcileConnections(doc, "library save")
+		})
+		if failure != nil {
+			libraryFailure(w, failure.Status, failure.Code, failure.Message, failure.Recovery, failure.Revision)
 			return
 		}
-		revision := resolve.LibraryRevision(e.Document)
-		if receipt, ok := e.Operations[in.OperationID]; ok {
-			if receipt.Digest != digest {
-				libraryFailure(w, 409, "operation_conflict", "Heads up — this operation ID was already used for different changes.", "reload", revision)
-				return
-			}
-			writeJSON(w, 200, l.libraryAnswer(e, map[string]any{"revision": receipt.Revision, "operationId": in.OperationID}))
-			return
-		}
-		if stringValue(in.Document["epoch"]) != stringValue(e.Document["epoch"]) {
-			libraryFailure(w, 409, "library_reset", "Profiles were reset! Give them a reload.", "reload", revision)
-			return
-		}
-		if in.ExpectedRevision != revision || resolve.LibraryRevision(in.Document) != revision {
-			libraryFailure(w, 409, "revision_conflict", "The library changed elsewhere — reload it and reapply your change.", "reload", revision)
-			return
-		}
-		previous := l.stored(e)
-		if previous != nil {
-			if dropped := droppedProfiles(previous, in.Document); len(dropped) > 0 {
-				owner, profile := slotUser(in.Document, dropped)
-				if profile.Name == "" {
-					if owner, profile, err = s.workspace.profileReference(dropped); err != nil {
-						libraryFailure(w, 503, "workspace_unavailable", "Oops! Couldn't read your saved projects, so we didn't delete any profiles.", "retry_storage", revision)
-						return
-					}
-				}
-				if profile.Name != "" {
-					message := owner + " uses " + profile.Name + ". Archive it instead."
-					if profile.Archived {
-						message = owner + " uses " + profile.Name + ", so it stays archived."
-					}
-					libraryFailure(w, 409, "profile_referenced", message, "archive_profile", revision)
-					return
-				}
-				dropCalibrations(in.Document, dropped)
-			}
-		}
-		stampEdited(in.Document, e.Document, time.Now().UTC())
-		if err := l.deviceDefaults(in.Document); err != nil {
-			libraryFailure(w, 400, "library_invalid", err.Error(), "repair_profiles", revision)
-			return
-		}
-		next, err := l.catalog.ParseLibrary(in.Document, previous)
-		if err != nil {
-			libraryFailure(w, 400, "library_invalid", err.Error(), "repair_profiles", revision)
-			return
-		}
-		if previous != nil {
-			if livePrinters(previous) > 0 && livePrinters(next) == 0 {
-				libraryFailure(w, 409, "last_printer", "Keep at least one printer!", "reload", revision)
-				return
-			}
-		}
-		if name := editedWhileRemoved(e.Document, in.Document); name != "" {
-			libraryFailure(w, 409, "removed", name+" was removed in another window, so this change wasn't saved.", "reload", revision)
-			return
-		}
-		if kind, taken := takenName(previous, next); taken != "" {
-			libraryFailure(w, 409, "name_taken", "Oops! There's already a "+kind+" named "+taken+".", "rename", revision)
-			return
-		}
-		if sameLibraryDocument(in.Document, e.Document) {
-			writeJSON(w, 200, l.libraryAnswer(e, map[string]any{"revision": revision, "operationId": in.OperationID}))
-			return
-		}
-		in.Document["revision"] = json.RawMessage(fmt.Sprint(revision + 1))
-		e.Document = in.Document
-		putReceipt(e.Operations, in.OperationID, libraryReceipt{Digest: digest, Revision: revision + 1}, func(r libraryReceipt) uint64 { return r.Seq },
-			func(r libraryReceipt, seq uint64) libraryReceipt { r.Seq = seq; return r })
-		if err := l.write(e); err != nil {
-			libraryFailure(w, 507, "library_write_failed", "Uh-oh, couldn't save profiles! Free up a little storage and try again.", "retry_storage", revision)
-			return
-		}
-		s.reconcileConnections(in.Document, "library save")
-		writeJSON(w, 200, l.libraryAnswer(e, map[string]any{"revision": revision + 1, "operationId": in.OperationID}))
+		writeJSON(w, 200, l.libraryAnswer(result.Envelope, map[string]any{"revision": result.Revision, "operationId": in.OperationID}))
 	})
 }
 
@@ -1208,14 +1136,19 @@ func (l *libraryStore) deviceDefaults(doc map[string]json.RawMessage) error {
 	}
 	changed := false
 	for _, p := range printers {
+		if p == nil {
+			return errors.New("printers has an invalid entry")
+		}
 		var nozzles []resolve.Nozzle
 		json.Unmarshal(p["nozzles"], &nozzles)
 		variant := ""
 		if len(nozzles) > 0 {
 			variant = nozzles[0].Variant
 		}
-		if n := l.extruders(variant); variant != "" && len(nozzles) != n {
-			return fmt.Errorf("%s: the printer has %d nozzles, its record lists %d", stringValue(p["name"]), n, len(nozzles))
+		if variant != "" {
+			if n := l.extruders(variant); len(nozzles) != n {
+				return fmt.Errorf("%s: the printer has %d nozzles, its record lists %d", stringValue(p["name"]), n, len(nozzles))
+			}
 		}
 		if stringValue(p["swap"]) == "" {
 			mode, _ := l.swap(variant)
@@ -1487,38 +1420,6 @@ func sameLibraryDocument(a, b map[string]json.RawMessage) bool {
 	}
 	ca := canonical(a)
 	return ca != "" && ca == canonical(b)
-}
-
-func stampEdited(doc, previous map[string]json.RawMessage, now time.Time) {
-	for _, list := range []string{"printers", "filaments", "processes"} {
-		var records, before []map[string]any
-		if json.Unmarshal(doc[list], &records) != nil {
-			continue
-		}
-		json.Unmarshal(previous[list], &before)
-		old := map[any]map[string]any{}
-		for _, r := range before {
-			old[r["id"]] = r
-		}
-		content := func(r map[string]any) string {
-			c := maps.Clone(r)
-			delete(c, "revision")
-			delete(c, "edited")
-			return string(must(json.Marshal(c)))
-		}
-		for _, r := range records {
-			if o := old[r["id"]]; o != nil && content(o) == content(r) {
-				if stamp, ok := o["edited"]; ok {
-					r["edited"] = stamp
-				} else {
-					delete(r, "edited")
-				}
-				continue
-			}
-			r["edited"] = now.Format(time.RFC3339)
-		}
-		doc[list] = must(json.Marshal(records))
-	}
 }
 
 func (l *libraryStore) reportLoad() {

@@ -85,10 +85,14 @@ func dropCalibrations(doc map[string]json.RawMessage, dropped map[string]dropped
 	}
 }
 
-func (st *workspaceStore) profileReference(ids map[string]droppedProfile) (owner string, profile droppedProfile, err error) {
+func (st *workspaceStore) profileReference(ids map[string]droppedProfile, readOnly bool) (owner string, profile droppedProfile, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	d, err := st.read()
+	read := st.read
+	if readOnly {
+		read = st.readSnapshot
+	}
+	d, err := read()
 	if err != nil {
 		return "", droppedProfile{}, err
 	}
