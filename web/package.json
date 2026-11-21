@@ -12,7 +12,8 @@
     "test:browser": "node scripts/check-notifications.cjs",
     "test:overview": "node scripts/check-overview.cjs",
     "test:defaults": "node scripts/check-defaults.cjs",
-    "test:flow-calibration": "node scripts/check-flow-calibration.cjs"
+    "test:flow-calibration": "node scripts/check-flow-calibration.cjs",
+    "test:device-switch": "node scripts/check-device-switch.cjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",

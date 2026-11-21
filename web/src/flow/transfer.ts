@@ -8,6 +8,10 @@ export type Transfer = { id: string; job: string; printer: string; name: string;
   reason?: string; recovery?: string; started: string; finished?: string;
   job_end?: 'finished' | 'failed' | 'cancelled';
   job_errors?: { code: string; message?: string }[] };
+export type SendSubmission =
+  | { type: 'submitted'; attempt: symbol; job: string; printer: string; start: boolean }
+  | { type: 'accepted'; attempt: symbol; transferId: string }
+  | { type: 'aborted'; attempt: symbol };
 export type TransferState = 'idle' | 'connecting' | 'sending' | 'sent' | 'failed';
 type TransferEvent = { type: 'START'; jobId: string; target: string } | { type: 'STATUS'; transfer: Transfer }
   | { type: 'FAIL'; error: string } | { type: 'RESET' } | { type: 'CANCEL' } | { type: 'RETRY' };
@@ -45,12 +49,15 @@ export const createTransfer = () => createMachine<TransferState, TransferEvent, 
 });
 export function createPrinterSend() {
   const machine = createTransfer();
+  const submissions = new Set<(event: SendSubmission) => void>();
+  const publish = (event: SendSubmission) => submissions.forEach((listener) => listener(event));
+  let submission: Extract<SendSubmission, { type: 'submitted' }> | undefined;
   let unfollow = () => {}, epoch = 0;
   const stop = () => { epoch++; unfollow(); unfollow = () => {}; };
   const follow = (jobId: string, target: string, id: string) => {
     const mine = epoch;
     let last = '', live = getState().printerConnections.live;
-    unfollow = subscribeStore(() => {
+    const update = () => {
       if (mine !== epoch) return;
       const c = getState().printerConnections, t = c.transfers.find((x) => x.id === id);
       if (c.live && !live) void connect(jobId, target);
@@ -59,12 +66,19 @@ export function createPrinterSend() {
       last = JSON.stringify(t);
       machine.send({ type: 'STATUS', transfer: t });
       if (machine.get().value !== 'sending') { unfollow(); if (machine.get().value === 'sent') rememberRecovery({ send: undefined }); }
-    });
+    };
+    unfollow = subscribeStore(update);
+    update();
   };
   const connect = async (jobId: string, target: string, body?: Record<string, unknown>) => {
     if (body !== undefined && !machine.can({ type: 'START', jobId, target })) return;
     stop(); const mine = epoch;
     if (body !== undefined || machine.get().value !== 'sending') machine.send({ type: 'START', jobId, target });
+    const localSend = body === undefined ? undefined : { type: 'submitted', attempt: Symbol(), job: jobId, printer: target, start: body.start !== false } satisfies SendSubmission;
+    if (localSend) {
+      submission = localSend;
+      publish(localSend);
+    }
     rememberRecovery({ send: { jobId, target } });
     try {
       const path = `/api/jobs/${encodeURIComponent(jobId)}/send`;
@@ -77,14 +91,17 @@ export function createPrinterSend() {
       machine.send({ type: 'STATUS', transfer });
       if (machine.get().value === 'sending') follow(jobId, target, transfer.id);
       else if (machine.get().value === 'sent') rememberRecovery({ send: undefined });
+      if (localSend) publish({ type: 'accepted', attempt: localSend.attempt, transferId: transfer.id });
     } catch (e) {
+      if (localSend) publish({ type: 'aborted', attempt: localSend.attempt });
       if (mine === epoch) machine.send({ type: 'FAIL', error: e instanceof Error ? e.message : 'Oops! The connection dropped while sending your print. Reconnect to check if it went through.' });
     }
   };
   let retryRequest = Promise.resolve();
   transferEffects.set(machine, {
     cancel: () => {
-      const { jobId } = machine.get().context, mine = epoch;
+      const { jobId, target } = machine.get().context, mine = epoch;
+      if (submission && submission.job === jobId && submission.printer === target) publish({ type: 'aborted', attempt: submission.attempt });
       if (jobId) void mutation(`/api/jobs/${encodeURIComponent(jobId)}/send/cancel`, { method: 'POST' }).then(async (r) => {
         if (!r.ok && r.status !== 409) { const error = (await responseError(r)).message; if (mine === epoch) machine.send({ type: 'FAIL', error }); }
       });
@@ -96,6 +113,7 @@ export function createPrinterSend() {
     },
   });
   return { machine,
+    subscribeSubmission: (listener: (event: SendSubmission) => void) => (submissions.add(listener), () => { submissions.delete(listener); }),
     submit: (printer: string, job: string, options: Record<string, unknown> = {}) => connect(job, printer, options),
     reconnect: (jobId: string, target: string) => connect(jobId, target),
     retry: () => { machine.send({ type: 'RETRY' }); return retryRequest; },

@@ -18,6 +18,8 @@
 :where(.orca-parity) .app:has(.canvas-area[data-viewport=preview]) .toast { bottom: 76px; }
 @keyframes notice-in { from { opacity: 0; transform: translate(-50%, var(--s-2)); } }
 :where(.orca-parity) .notifications > .toast { position: static; transform: none; left: auto; bottom: auto; min-width: 0; max-width: none; width: 100%; box-sizing: border-box; animation: notice-slide var(--dur-2) var(--ease); }
+:where(.orca-parity) .modal-notice { padding: var(--s-3) var(--s-5); border-top: 1px solid var(--line); }
+:where(.orca-parity) .modal-notice > .toast { position: static; transform: none; min-width: 0; max-width: none; animation: none; }
 
 :where(.orca-parity) .top-layer { position: fixed; inset: 0 auto auto 0; z-index: 110; pointer-events: none; }
 :where(.orca-parity) .top-layer > * { pointer-events: auto; }

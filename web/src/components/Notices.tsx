@@ -5,12 +5,15 @@ import { slice } from '../actions';
 import { sliceFailure } from '../notice-codes';
 import { setState, useStore } from '../state/store';
 import { InTopLayer, useModalCount } from './Modal';
+import { DeviceSwitchToast, useDeviceSwitchCountdown } from './DeviceSwitchToast';
 import './notices.css';
 import { copyToClipboard } from '../clipboard';
 import { accessSnapshot, subscribeAccess } from '../api/access';
 
 
 export function Toast() {
+  const countdown = useDeviceSwitchCountdown();
+  const switching = countdown !== null;
   const toast = useStore((s) => s.toast);
   const seq = useStore((s) => s.toastSeq);
   const action = useStore((s) => (s.toast && s.toastAction?.msg === s.toast ? s.toastAction : null));
@@ -22,13 +25,13 @@ export function Toast() {
   const overDialog = useModalCount() > 0;
   const waiting = overDialog && !!toast && kind !== 'error' && action?.label !== 'Undo';
   useEffect(() => {
-    if (!toast || held || waiting) return;
+    if (!toast || held || waiting || switching) return;
     const t = setTimeout(() => setState((s) => (s.toast === toast ? { toast: null } : {})), ms ?? 3500);
     return () => clearTimeout(t);
-  }, [toast, seq, held, waiting, ms]);
-  useEffect(() => setHeld(false), [msg]);
-  const lane = useNoticeLane(msg);
-  const undoKey = overDialog && action?.label === 'Undo';
+  }, [toast, seq, held, waiting, ms, switching]);
+  useEffect(() => setHeld(false), [msg, switching]);
+  const lane = useNoticeLane(switching || msg);
+  const undoKey = !switching && overDialog && action?.label === 'Undo';
   useEffect(() => {
     if (!undoKey || !action) return;
     const onKey = (e: KeyboardEvent) => {
@@ -39,6 +42,7 @@ export function Toast() {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [undoKey, action]);
+  if (switching) return overDialog ? null : inNoticeLane(<DeviceSwitchToast seconds={countdown} />, lane);
   if (!msg || waiting) return null;
   const card = (
       <div className={`toast toast-${kind}`} role={kind === 'error' || kind === 'warning' ? 'alert' : 'status'}

@@ -13,6 +13,7 @@ import WorkspaceRail from './components/WorkspaceRail';
 import { AskHost } from './components/Ask';
 import { TopBar } from './components/TopBar';
 import { graphicsCapability } from './browser-support';
+import { followDeviceSwitch } from './printers/device-switch';
 const overlays = () => import('./components/CanvasOverlays'), heights = () => import('./components/LayerHeight');
 const CanvasToolbar = preloadable(() => overlays().then(m => ({default: m.CanvasToolbar})));
 const CutPanel = preloadable(() => overlays().then(m => ({default: m.CutPanel})));
@@ -121,6 +122,7 @@ function focusSoon(find: () => HTMLElement | null | undefined, frames = 60) {
 }
 
 export default function App() {
+  useEffect(followDeviceSwitch, []);
   const setupOpen = useSetup((s) => s.value !== 'closed');
   const projects = useStore((s) => s.tab === 'projects');
   const palette = useSyncExternalStore(subscribePalette, paletteQuery);

@@ -14,7 +14,7 @@
 
 :where(.orca-parity) .modal > form { display: contents; }
 :where(.orca-parity) .modal > *, :where(.orca-parity) .modal > form > * { flex: none; min-height: 0; }
-:where(.orca-parity) .modal-body, :where(.orca-parity) :is(.modal, .modal > form) > :nth-last-child(1 of :not(.modal-buttons)):not(.modal-title, form) { flex: 1 1 auto; min-height: 0; overflow: auto; }
+:where(.orca-parity) .modal-body, :where(.orca-parity) :is(.modal, .modal > form) > :nth-last-child(1 of :not(.modal-buttons, .modal-notice)):not(.modal-title, form) { flex: 1 1 auto; min-height: 0; overflow: auto; }
 :where(.orca-parity) .modal-body { display: flex; flex-direction: column; gap: var(--s-4); padding: var(--s-5); }
 :where(.orca-parity) .modal-body > p { margin: 0; color: var(--ink-2); }
 :where(.orca-parity) .modal-body > * { flex-shrink: 0; }

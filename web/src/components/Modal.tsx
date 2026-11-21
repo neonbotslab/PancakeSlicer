@@ -1,7 +1,8 @@
-import { useEffect, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Glyph } from './Glyph';
 import { Dialog } from 'radix-ui';
+import { DeviceSwitchToast, useDeviceSwitchCountdown } from './DeviceSwitchToast';
 import './dialog.css';
 
 export type ModalSize = 's' | 'm' | 'l' | 'xl' | 'window';
@@ -16,11 +17,23 @@ function focusFirst(root: HTMLElement) {
   target.focus({ preventScroll: true });
 }
 
-let openModals = 0;
+const activeModals = new Set<symbol>();
 const modalListeners = new Set<() => void>();
-const countModal = (d: number) => { openModals += d; modalListeners.forEach((l) => l()); };
-export const useModalCount = () => useSyncExternalStore((l) => { modalListeners.add(l); return () => void modalListeners.delete(l); }, () => openModals);
-function Counted() { useEffect(() => { countModal(1); return () => countModal(-1); }, []); return null; }
+const subscribeModals = (l: () => void) => { modalListeners.add(l); return () => { modalListeners.delete(l); }; };
+const notifyModals = () => modalListeners.forEach((l) => l());
+export const useModalCount = () => useSyncExternalStore(subscribeModals, () => activeModals.size);
+
+function ModalNotice() {
+  const [id] = useState(() => Symbol());
+  const top = useSyncExternalStore(subscribeModals, () => [...activeModals].at(-1));
+  const seconds = useDeviceSwitchCountdown();
+  useEffect(() => {
+    activeModals.add(id);
+    notifyModals();
+    return () => { activeModals.delete(id); notifyModals(); };
+  }, [id]);
+  return top === id && seconds !== null ? <div className="modal-notice"><DeviceSwitchToast seconds={seconds} /></div> : null;
+}
 const inTopLayer = (e: Event) => !!(e.target as Element | null)?.closest?.('.top-layer');
 
 export function Modal({ label, onClose, className = '', size = 'window', alert = false, backdropClose = false, returnFocus, onEscapeKeyDown, children }: {
@@ -35,7 +48,7 @@ export function Modal({ label, onClose, className = '', size = 'window', alert =
       onKeyDown={(e) => {
         const radioArrow = e.defaultPrevented && e.key.startsWith('Arrow') && e.target instanceof Element && e.target.closest('[role="radiogroup"]');
         if (!radioArrow) e.stopPropagation();
-      }}><Counted />{children}</Dialog.Content></Dialog.Portal></Dialog.Root>;
+      }}>{children}<ModalNotice /></Dialog.Content></Dialog.Portal></Dialog.Root>;
 }
 export function ModalTitle({ title, onClose }: { title: ReactNode; onClose(): void }) {
   return <div className="modal-title"><Dialog.Title asChild><h2>{title}</h2></Dialog.Title><button type="button" className="modal-close" aria-label="Close" onClick={onClose}><Glyph name="close" size={14} /></button></div>;

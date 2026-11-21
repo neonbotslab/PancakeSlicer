@@ -167,7 +167,7 @@ export const redoName = () => redoStack[redoStack.length - 1]?.name ?? null;
 export const historyDepth = () => ({ undo: undoStack.length, redo: redoStack.length });
 
 const leaving = new Set<() => void>();
-export const onLeaveDocument = (f: () => void) => { leaving.add(f); };
+export const onLeaveDocument = (f: () => void) => { leaving.add(f); return () => { leaving.delete(f); }; };
 export const leaveDocument = () => leaving.forEach((f) => f());
 
 export function newDocument(isSaved: boolean) {

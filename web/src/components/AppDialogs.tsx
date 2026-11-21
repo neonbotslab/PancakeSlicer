@@ -1,6 +1,7 @@
 import { savePreferences, usePreference } from '../saved-preferences';
 import { AFTER_SLICE_PREFERENCE, afterSlicePreference, type AfterSliceAction } from '../after-slice';
 import { FLOW_CALIBRATION_OPTIONS, FLOW_CALIBRATION_PREFERENCE, flowCalibrationPreference } from '../flow-calibration';
+import { OPEN_DEVICE_AFTER_PRINT, OPEN_DEVICE_DELAY, openDeviceAfterPrint, openDeviceDelay } from '../flow/device-switch';
 import { preloadable } from '../preloadable';
 import { Check } from './Check';
 import { Dropdown } from './Dropdown';
@@ -47,6 +48,9 @@ function Preferences() {
   const mixed = useStore((s) => s.mixedTemperatures);
   const afterSlice = afterSlicePreference(usePreference(AFTER_SLICE_PREFERENCE));
   const flowCalibration = flowCalibrationPreference(usePreference(FLOW_CALIBRATION_PREFERENCE));
+  const shouldOpenDevice = openDeviceAfterPrint(usePreference(OPEN_DEVICE_AFTER_PRINT));
+  const deviceDelay = openDeviceDelay(usePreference(OPEN_DEVICE_DELAY));
+  const [delayDraft, setDelayDraft] = useState<string | null>(null);
   const hasConfiguredPrinter = useStore((s) => s.printerConnections.connections.length > 0);
   const afterSliceNote = afterSlice === 'send' && !hasConfiguredPrinter;
   const notifications = useSyncExternalStore(subscribeNotificationSettings, notificationSettingsSnapshot);
@@ -79,6 +83,16 @@ function Preferences() {
               onChange={(value) => savePreferences({ [FLOW_CALIBRATION_PREFERENCE]: value })} />
           </div>
           <p id="flow-calibration-note" className="notification-setting-note default-setting-note">Auto skips calibration if the filament was calibrated recently; printers without Auto use On.</p>
+        </div>
+        <div className="default-setting">
+          <label className="modal-check"><Check checked={shouldOpenDevice} onCheckedChange={(next) => savePreferences({ [OPEN_DEVICE_AFTER_PRINT]: next })} />Open Device page after printer confirms job</label>
+          <label className="form-row"><span>Delay (seconds)</span>
+            <input className="text num" type="number" min={0} max={60} step={1} value={delayDraft ?? deviceDelay} disabled={!shouldOpenDevice}
+              onChange={(e) => {
+                setDelayDraft(e.target.value);
+                savePreferences({ [OPEN_DEVICE_DELAY]: openDeviceDelay(e.target.valueAsNumber) });
+              }} onBlur={() => setDelayDraft(null)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+          </label>
         </div>
         <h3 className="modal-group">Notifications</h3>
         <div className="notification-setting">
