@@ -2,7 +2,7 @@ import { serviceAnswered } from './api/access';
 import { librarySync } from './flow/library-sync';
 import { pageId as id, tabTopic } from './tabs';
 
-export type LiveEvent = 'revision' | 'connections' | 'session' | 'down' | 'up';
+export type LiveEvent = 'revision' | 'connections' | 'session' | 'preferences' | 'down' | 'up';
 type Message = { kind: 'event'; type: LiveEvent; data: string } | { kind: 'hello' }
   | { kind: 'beat' | 'claim' | 'bye'; term: number; id: string };
 
@@ -38,7 +38,7 @@ function open() {
   current = { source, watch };
   const alive = () => { heard = Date.now(); beat(); serviceAnswered(); if (librarySync.get().value === 'reconnecting') publish('up', ''); };
   source.addEventListener('ping', alive);
-  for (const type of ['revision', 'connections', 'session'] as const) source.addEventListener(type, (e) => { alive(); publish(type, (e as MessageEvent<string>).data); });
+  for (const type of ['revision', 'connections', 'session', 'preferences'] as const) source.addEventListener(type, (e) => { alive(); publish(type, (e as MessageEvent<string>).data); });
   source.onerror = lost;
 }
 

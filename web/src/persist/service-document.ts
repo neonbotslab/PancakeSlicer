@@ -14,6 +14,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 export function createServiceDocument<D extends ServiceDocument>(path: string, method: 'PUT' | 'PATCH', owner: NoticeOwner, beforeWrite: (document: D) => Promise<unknown> = () => Promise.resolve(), merge: Partial<Record<keyof D & string, KeyMerge>> = {}) {
   let current: DocumentSnapshot<D> = { state: 'loading', revision: 0, document: {} as D, error: null, code: null };
   let hydrated = false, loading: Promise<DocumentSnapshot<D>> | null = null, running: Promise<void> | null = null;
+  let requestedRevision = 0, refreshing: { retry: boolean } | null = null;
   let serial = 0, savedSerial = 0;
   let beforeHydration: Partial<D> = {};
   const unsaved = new Map<string, number>();
@@ -49,13 +50,43 @@ export function createServiceDocument<D extends ServiceDocument>(path: string, m
   if (typeof window !== 'undefined') window.addEventListener('online', () => { if (sync.get().value === 'failed') sync.send({ type: 'ONLINE' }); });
   if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { if (sync.get().value === 'debounced') void flush().catch(() => {}); });
   const publish = (patch: Partial<DocumentSnapshot<D>>) => { current = { ...current, ...patch }; listeners.forEach((listener) => listener()); };
-  sync.subscribe(({ value, context }) => publish({ state: value, error: context.error, code: context.code }));
+  sync.subscribe(({ value, context }) => {
+    publish({ state: value, error: context.error, code: context.code });
+    if (value === 'ready') refreshRemote();
+  });
   const message = (error: unknown) => error instanceof Error ? error.message : String(error);
   const codeOf = (error: unknown) => (error as { code?: unknown })?.code as string | undefined ?? null;
+  async function readRemote() {
+    const remote = await serviceJson<Pick<DocumentSnapshot<D>, 'revision' | 'document'>>(path);
+    if (!remote || !Number.isSafeInteger(remote.revision) || remote.revision < 0 || !remote.document || typeof remote.document !== 'object' || Array.isArray(remote.document)) throw new Error('Oops! The saved project file on the server couldn\'t be read.');
+    return { revision: remote.revision, document: remote.document };
+  }
+  const canRefresh = () => hydrated && current.state === 'ready' && savedSerial === serial && current.revision < requestedRevision;
+  function refreshRemote() {
+    if (!canRefresh()) return;
+    if (refreshing) {
+      refreshing.retry = true;
+      return;
+    }
+    const request = { retry: false };
+    const editSerial = serial, baseRevision = current.revision, startingBase = base;
+    refreshing = request;
+    void readRemote().then((remote) => {
+      if (!canRefresh() || serial !== editSerial || current.revision !== baseRevision || base !== startingBase || remote.revision < requestedRevision) return;
+      base = remote.document;
+      publish(remote);
+    }).catch(() => {}).finally(() => {
+      refreshing = null;
+      if (request.retry) refreshRemote();
+    });
+  }
+  function followRevision(revision = requestedRevision) {
+    requestedRevision = Math.max(requestedRevision, revision);
+    refreshRemote();
+  }
   const hydrate = () => {
     if (hydrated) return Promise.resolve(current);
-    loading ??= serviceJson<{revision:number;document:D}>(path).then((remote) => {
-      if (!remote || !Number.isSafeInteger(remote.revision) || remote.revision < 0 || !remote.document || typeof remote.document !== 'object' || Array.isArray(remote.document)) throw new Error('Oops! The saved project file on the server couldn\'t be read.');
+    loading ??= readRemote().then((remote) => {
       hydrated = true; base = remote.document;
       publish({ ...remote, document: { ...remote.document, ...beforeHydration } });
       beforeHydration = {};
@@ -120,7 +151,7 @@ export function createServiceDocument<D extends ServiceDocument>(path: string, m
   return {
     snapshot: () => current,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    hydrate, patch, flush, machine: sync,
+    hydrate, patch, flush, followRevision, machine: sync,
     async reload() {
       if (running) await running.catch(() => {});
       const previous = current, previousSerial = serial, previousSaved = savedSerial;

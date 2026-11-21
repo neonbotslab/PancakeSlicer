@@ -27,14 +27,15 @@ import (
 )
 
 type workspaceStore struct {
-	mu             sync.Mutex
-	root           string
-	cached         *workspaceData
-	stamp          [2]int64
-	views          map[string]any
-	leases         map[string]*projectLease
-	watch          sync.Mutex
-	sessionChanged chan struct{}
+	mu                 sync.Mutex
+	root               string
+	cached             *workspaceData
+	stamp              [2]int64
+	views              map[string]any
+	leases             map[string]*projectLease
+	watch              sync.Mutex
+	sessionChanged     chan struct{}
+	preferencesChanged chan struct{}
 }
 
 func (st *workspaceStore) sessionWritten() {
@@ -80,8 +81,9 @@ type workspaceDraft struct {
 	UpdatedAt int64           `json:"updatedAt"`
 }
 type workspaceValue struct {
-	Revision uint64          `json:"revision"`
-	Document json.RawMessage `json:"document"`
+	Revision uint64             `json:"revision"`
+	Document json.RawMessage    `json:"document"`
+	History  []settingsRevision `json:"history,omitempty"`
 }
 
 const (
@@ -996,6 +998,29 @@ func (st *workspaceStore) putValue(w http.ResponseWriter, r *http.Request, kind 
 		workspaceFailure(w, 400, "invalid_document", "document is required.", "keep_draft", 0)
 		return
 	}
+	if kind == "preferences" {
+		out, err := st.writePreferences(preferencesWrite{OperationID: in.OperationID, ExpectedRevision: in.ExpectedRevision, Document: in.Document})
+		if err != nil {
+			if failure, ok := err.(*settingsWriteError); ok {
+				out := workspaceError(failure.Code, failure.Message, failure.Recovery, failure.Revision)
+				if failure.Code == "revision_conflict" {
+					st.mu.Lock()
+					current, readErr := st.readSnapshot()
+					if readErr == nil {
+						out["document"] = normalizePreferences(current.Values["preferences"].Document)
+						out["revision"] = current.Values["preferences"].Revision
+					}
+					st.mu.Unlock()
+				}
+				writeJSON(w, failure.Status, out)
+			} else {
+				workspaceFailure(w, 503, "workspace_unavailable", "Could not save preferences.", "retry_storage", 0)
+			}
+			return
+		}
+		writeJSON(w, 200, out)
+		return
+	}
 	digest := workspaceDigest([]any{kind, in})
 	st.locked(w, func(d *workspaceData) {
 		if workspaceReplay(w, d, in.OperationID, digest) {
@@ -1011,7 +1036,7 @@ func (st *workspaceStore) putValue(w http.ResponseWriter, r *http.Request, kind 
 			writeJSON(w, 409, failure)
 			return
 		}
-		v = workspaceValue{v.Revision + 1, in.Document}
+		v = workspaceValue{Revision: v.Revision + 1, Document: in.Document, History: v.History}
 		response := map[string]any{"revision": v.Revision, "operationId": in.OperationID}
 		if kind == "preferences" {
 			v.Document = normalizePreferences(v.Document)

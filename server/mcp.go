@@ -81,6 +81,7 @@ func (service *mcpService) handler() http.Handler {
 	s := service.server
 	protocol := mcp.NewServer(&mcp.Implementation{Name: "PancakeSlicer", Version: "1.0.0"}, nil)
 	service.addDataTools(protocol)
+	service.addSettingsTools(protocol)
 	mcpTool(protocol, "prepare_print", "Validate a completed slice and prepare a print without sending it. Show the FULL returned summary to the human and obtain explicit approval before confirm_print. Stores approval metadata and a short-lived single-use token. No printer upload occurs.", false, service.preparePrint)
 	mcpTool(protocol, "confirm_print", "Send and start ONLY the exact prepared print after the human explicitly approves its full summary. Requires the token, exact digest, and human_approved=true. Tokens are session-bound, expire, and are consumed on every confirmation attempt. Elicitation must also be accepted when supported. Never call automatically or infer approval.", false, service.confirmPrint)
 	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return protocol }, &mcp.StreamableHTTPOptions{SessionTimeout: 15 * time.Minute})

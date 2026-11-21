@@ -37,8 +37,11 @@ func (s *Server) liveEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sent, sessionSent, last := uint64(0), uint64(0), []byte(nil)
+	var preferencesSent uint64
+	firstPreferences := true
 	for {
 		changed, sessionChanged := l.wait(), ws.sessionWait()
+		preferencesChanged := ws.preferencesWait()
 		hub.mu.Lock()
 		wake := hub.wake
 		hub.mu.Unlock()
@@ -59,6 +62,12 @@ func (s *Server) liveEvents(w http.ResponseWriter, r *http.Request) {
 		if revision := ws.sessionRevision(); revision != sessionSent {
 			sessionSent = revision
 			if _, err := fmt.Fprintf(w, "event: session\ndata: {\"revision\":%d}\n\n", revision); err != nil {
+				return
+			}
+		}
+		if revision := ws.preferencesRevision(); firstPreferences || revision != preferencesSent {
+			preferencesSent, firstPreferences = revision, false
+			if _, err := fmt.Fprintf(w, "event: preferences\ndata: {\"revision\":%d}\n\n", revision); err != nil {
 				return
 			}
 		}
@@ -85,6 +94,7 @@ func (s *Server) liveEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-changed:
 		case <-sessionChanged:
+		case <-preferencesChanged:
 		case <-wake:
 		case <-tick:
 		case <-heartbeat.C:

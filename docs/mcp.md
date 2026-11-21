@@ -50,6 +50,16 @@ The client must already be able to reach the server. A local client on the tailn
 | `get_plate` | One saved plate's objects, settings, and events. |
 | `list_printers` | Saved setup IDs, live state, progress, AMS trays, and nozzles. |
 | `list_profiles` | Saved printer, process, and filament IDs and slot assignments. |
+| `get_profile` | Saved profile settings, record revision, and opaque library revision. |
+| `update_profile` | Validates and saves individual option changes on an existing profile. |
+| `save_profile_as` | Saves a named copy with optional option changes and fresh profile and slot IDs. |
+| `rename_profile` | Changes a saved profile's name while preserving its ID and references. |
+| `get_printer_defaults` | Saved default process and stable filament slot assignments for a printer setup. |
+| `update_printer_defaults` | Saves a process selection and patches filament, colour, or tray assignments by stable slot ID. |
+| `get_preferences` | Server-side Defaults preferences and the remembered startup printer. |
+| `update_preferences` | Validates and saves allowed Defaults preferences or a startup printer selection. |
+| `list_settings_history` | Retained revision IDs, snapshots, and diffs for one profile or preferences. |
+| `revert_settings` | Restores a retained snapshot as a new revision after validation. |
 | `list_catalog_filaments` | Filtered and paginated built-in filament products. |
 | `get_catalog_profile` | One built-in printer, process, or filament product. |
 | `upload_model` | Writes an STL or 3MF from base64 into the content-addressed blob cache. |
@@ -59,6 +69,34 @@ The client must already be able to reach the server. A local client on the tailn
 | `confirm_print` | Consumes an approval token and sends and starts its exact prepared job. |
 
 Printer IDs identify saved printer setups. They are not hardware serial numbers. Bambu nozzle extruder index 0 is left and index 1 is right on a dual-nozzle printer. Printer status includes timestamps so clients can distinguish a current report from an offline report. Preparation and confirmation require a fresh online, ready report.
+
+## Persistent settings
+
+Settings writes use the same library and workspace transactions as the web UI. They do not need a print confirmation token. Every settings write tool instructs agents to preview the change, show its validated before/after diff to the human, and obtain approval before saving. The server cannot attest approval obtained outside the application.
+
+Read the target first. Pass its exact opaque `revision` as `expected_revision` on a write, including previews and reverts. These tokens include the stored content, so reusing a numeric revision after a reset does not make an old token valid. A conflict rejects the entire change and returns the current revision in the tool error. Read again and obtain approval for the revised diff. MCP never automatically rebases a stale write. The UI's existing numeric revision checks remain in place, and the server advances changed record revisions for UI and MCP saves.
+
+Set `dry_run: true` on any settings write to validate and return the planned diff without saving history, advancing the stored revision, or emitting an event. The preview returns the current revision token for the subsequent write. Generated IDs and edit timestamps in a save-as preview are provisional. Previews and MCP settings reads do not run storage migrations. An older library must first complete its normal application upgrade.
+
+Use `kind` values `process`, `printer`, and `filament` with `profile_id` from `list_profiles`. `update_profile.changes` maps individual engine keys to values. A null value removes an override. The default sections are `values`, `machine`, and `settings`, respectively. Printer process overrides use `section: "printOverrides"`. Read-only, unknown, misplaced, hardware, authentication, and connection options are refused. Numeric types, ranges, and enum values come from the running engine's option dictionary and the catalog's record ownership rules. Compound point and grouped values currently support removing an override only. Printer nozzle hardware uses the existing UI.
+
+Saved profiles, per-printer default process selections, and stable slots persist in `library.json`. `update_printer_defaults` accepts a `printer_id`, optional `process_id`, and `slots` patches addressed by `slot_id`. Each slot patch can set `filament_id`, `colour`, and `tray`. Empty strings clear the corresponding assignment. The library validates profile references, tray syntax, and topology. Slot edits preserve IDs and ordering and do not contact hardware or write its loaded spool data. Save-as copies linked calibrations, allocates fresh slot and mix IDs, and does not copy connections or select the new profile.
+
+The following preferences already persist server-side in `workspace/workspace.json` through `/api/preferences`.
+
+| Preference key | Values and fallback |
+| --- | --- |
+| `orca.printer` | Saved startup printer ID or an empty string. `orca.vendor` is derived from that printer. |
+| `orca.web.afterSlice` | `export` or `send`. Fallback `export`. |
+| `orca.web.flowCalibration` | `off`, `auto`, or `on`. Fallback `auto`. |
+| `orca.web.openDeviceAfterPrint` | Boolean. Fallback `true`. |
+| `orca.web.openDeviceDelay` | Integer seconds from 0 through 60. Fallback `5`. |
+
+`update_preferences.changes` accepts only these writable keys. It preserves other preferences and rejects direct writes to `orca.vendor`. No browser-storage migration is needed. MCP never exposes writes to bearer tokens, authentication, printer addresses, access credentials, or LAN configuration.
+
+Library and preference saves atomically retain history beside their existing documents. Existing operation receipts support retries; they are separate from restorable history. Project versions remain separate. The first edit captures the previous snapshot. Each subsequent save records a new snapshot, with at most 64 retained snapshots per target. `list_settings_history` accepts a profile kind and ID, or `kind: "preferences"`, and returns retained `id` values. Pass one as `revert_settings.revision_id` with the current `expected_revision`. Revert restores that target's snapshot as a new revision, validates changed options, and records its own history. It preserves unrelated profiles and non-exposed preferences. History from before this feature is unavailable. Creation has no earlier profile snapshot to restore, and MCP does not delete profiles. Archived snapshots are read-only through MCP; archive and restore remain UI operations.
+
+Library saves emit the existing `revision` event on `/api/events`. Preference saves emit `preferences` there. The browser follows these events, refreshes clean preference documents, and defers refresh while preference edits are pending. Its existing library refresh updates profiles and slots and handles overlapping profile drafts. An open project's active profile selections remain its own selections; the remembered startup printer and saved process defaults apply through the normal startup or selection flow. MCP settings writes do not run connection reconciliation.
 
 ## Slicing inputs
 
