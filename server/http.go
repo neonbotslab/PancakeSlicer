@@ -71,6 +71,7 @@ func NewServer(c Config, jobs *JobManager, catalog *resolve.Catalog) http.Handle
 	workspace := &workspaceStore{root: filepath.Join(c.DataDir, "workspace")}
 	workspace.register(mux)
 	s.workspace = workspace
+	mux.Handle("/mcp", s.mcpHandler())
 	s.versionRoutes(mux)
 	s.blobs = &blobStore{root: filepath.Join(c.DataDir, "blobs"), limit: blobCacheBytes}
 	s.blobs.register(mux, c.MaxUploadSize)
@@ -310,6 +311,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := JobRequest{Orient: r.FormValue("operation") == "orient" || r.FormValue("operation") == "orient-scores", Output: r.FormValue("output"), Filename: r.FormValue("filename")}
+	req.SourceProject, _ = r.Context().Value(sourceProjectKey{}).(*jobSourceProject)
 	if v := r.Header.Get(sessionHeader); len(v) <= 256 {
 		req.Session = v
 	}
@@ -879,6 +881,11 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.jobs.Remove(j); err != nil {
+		var refused *admissionError
+		if errors.As(err, &refused) {
+			admissionFailure(w, err)
+			return
+		}
 		fail(w, 500, "couldnt_remove_job", err.Error())
 		return
 	}

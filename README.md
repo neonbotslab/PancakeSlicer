@@ -14,6 +14,7 @@ Everything is a WIP. Come talk about Non Planar (or PancakeSlicer issues) on [Di
 - [Supported Printers](#supported-printers)
 - [Non-planar](#non-planar)
 - [Self-hostable](#self-hostable)
+- [MCP agent tools](docs/mcp.md)
 - [Dynamic Profiles](#dynamic-profiles)
 - [Other Features](#other-features)
 - [A familiar user experience for users and developers](#a-familiar-user-experience-for-users-and-developers)

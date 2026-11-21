@@ -148,6 +148,25 @@ func (d *workspaceData) clone() *workspaceData {
 }
 func fileStamp(info os.FileInfo) [2]int64 { return [2]int64{info.Size(), info.ModTime().UnixNano()} }
 
+func (st *workspaceStore) readSnapshot() (*workspaceData, error) {
+	path := filepath.Join(st.root, "workspace.json")
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return newWorkspaceData(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if st.cached != nil && st.stamp == fileStamp(info) {
+		return st.cached.clone(), nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return decodeWorkspace(raw)
+}
+
 func (st *workspaceStore) read() (*workspaceData, error) {
 	path := filepath.Join(st.root, "workspace.json")
 	info, err := os.Stat(path)

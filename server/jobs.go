@@ -26,6 +26,14 @@ import (
 	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
+type sourceProjectKey struct{}
+
+type jobSourceProject struct {
+	ID       string `json:"project_id"`
+	Revision uint64 `json:"revision"`
+	Plate    int    `json:"plate_index"`
+}
+
 type JobRequest struct {
 	Library                *resolve.Request `json:"library,omitempty"`
 	Submission             *submittedConfig `json:"submission,omitempty"`
@@ -75,6 +83,8 @@ type JobRequest struct {
 	Session                string           `json:"session,omitempty"`
 	SliceGroup             string           `json:"slice_group,omitempty"`
 	PreviewBudget          float64          `json:"preview_budget,omitempty"`
+
+	SourceProject *jobSourceProject `json:"source_project,omitempty"`
 }
 
 type Event struct {
@@ -138,6 +148,8 @@ type Job struct {
 	progress      *float64
 	send          *Transfer
 	resultReady   bool
+
+	artifactReaders int
 }
 
 type JobView struct {
@@ -564,6 +576,12 @@ func (m *JobManager) Remove(j *Job) error {
 }
 
 func (m *JobManager) removeLocked(j *Job) error {
+	j.mu.Lock()
+	active := j.artifactReaders > 0
+	j.mu.Unlock()
+	if active {
+		return &admissionError{409, "job artifact is currently in use", 0}
+	}
 	if err := os.RemoveAll(j.Dir); err != nil {
 		return err
 	}

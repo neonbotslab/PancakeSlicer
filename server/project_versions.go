@@ -80,7 +80,7 @@ func (st *workspaceStore) versionOfJob(job string) (string, uint64) {
 	}
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	d, err := st.read()
+	d, err := st.readSnapshot()
 	if err != nil {
 		log.Printf("version of job %s: %v", job, err)
 		return "", 0

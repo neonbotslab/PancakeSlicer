@@ -39,6 +39,10 @@ type Config struct {
 	MaxClientJobs         int
 	MaxQueue              int
 	BearerToken           string
+	MCPEnabled            bool
+	MCPToken              string
+	MCPConfirmationTTL    time.Duration
+	MCPOrigins            []string
 	DiskQuota             int64
 	RequestLog            bool
 	Metrics               bool
@@ -100,6 +104,10 @@ func parseConfig() Config {
 	flag.IntVar(&c.MaxClientJobs, "max-client-jobs", envInt("ORCA_WEB_MAX_CLIENT_JOBS", 0), "active jobs per IP; 0 disables (ORCA_WEB_MAX_CLIENT_JOBS)")
 	flag.IntVar(&c.MaxQueue, "max-queue", envInt("ORCA_WEB_MAX_QUEUE", -1), "waiting jobs; -1 unlimited, 0 no waiting (ORCA_WEB_MAX_QUEUE)")
 	flag.StringVar(&c.BearerToken, "bearer-token", env("ORCA_WEB_BEARER_TOKEN", ""), "mutation bearer token; empty disables (ORCA_WEB_BEARER_TOKEN)")
+	flag.BoolVar(&c.MCPEnabled, "mcp-enabled", envBool("ORCA_WEB_MCP_ENABLED"), "enable /mcp (ORCA_WEB_MCP_ENABLED)")
+	flag.StringVar(&c.MCPToken, "mcp-token", env("ORCA_WEB_MCP_TOKEN", ""), "additional MCP bearer key (ORCA_WEB_MCP_TOKEN)")
+	flag.DurationVar(&c.MCPConfirmationTTL, "mcp-confirmation-ttl", envDuration("ORCA_WEB_MCP_CONFIRMATION_TTL", 5*time.Minute), "MCP print approval lifetime (ORCA_WEB_MCP_CONFIRMATION_TTL)")
+	c.MCPOrigins = strings.FieldsFunc(env("ORCA_WEB_MCP_ORIGINS", ""), func(r rune) bool { return r == ',' })
 	quota, _ := strconv.ParseInt(env("ORCA_WEB_DISK_QUOTA", "0"), 10, 64)
 	flag.Int64Var(&c.DiskQuota, "disk-quota", quota, "job directory quota in bytes; 0 disables (ORCA_WEB_DISK_QUOTA)")
 	flag.BoolVar(&c.RequestLog, "request-log", envBool("ORCA_WEB_REQUEST_LOG"), "JSON request logging (ORCA_WEB_REQUEST_LOG)")
@@ -109,6 +117,15 @@ func parseConfig() Config {
 	flag.StringVar(&c.ReleaseToken, "release-token", env("ORCA_WEB_RELEASE_TOKEN", ""), "token for a private -release-feed, sent only to GitHub's API (ORCA_WEB_RELEASE_TOKEN)")
 	proxies := flag.String("trusted-proxies", env("ORCA_WEB_TRUSTED_PROXIES", ""), "comma-separated trusted proxy CIDRs (ORCA_WEB_TRUSTED_PROXIES)")
 	flag.Parse()
+	if c.MCPConfirmationTTL <= 0 {
+		log.Fatal("mcp-confirmation-ttl must be positive")
+	}
+	for i, origin := range c.MCPOrigins {
+		c.MCPOrigins[i] = strings.TrimSpace(origin)
+		if !validMCPOrigin(c.MCPOrigins[i]) {
+			log.Fatal("MCP origins must be exact http or https origins without paths")
+		}
+	}
 	if err := validateSourceURL(c.SourceURL); err != nil {
 		log.Fatal(err)
 	}

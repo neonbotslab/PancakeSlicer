@@ -269,6 +269,9 @@ func (m *JobManager) restoreJobs() error {
 			log.Printf("retaining unreadable job directory %s", entry.Name())
 			continue
 		}
+		if err := cleanupMCPArtifacts(dir); err != nil {
+			return fmt.Errorf("clean print approval scratch: %w", err)
+		}
 		for _, journal := range []string{"transitions.jsonl", "events.jsonl"} {
 			if err := repairJobJournal(filepath.Join(dir, journal)); err != nil {
 				return fmt.Errorf("repair job %s journal: %w", r.ID, err)

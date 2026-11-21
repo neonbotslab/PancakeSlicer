@@ -140,7 +140,10 @@ func (m *JobManager) quotaLocked() error {
 	}
 	var finished []*Job
 	for _, j := range m.jobs {
-		if j.State().Finished() {
+		j.mu.Lock()
+		removable := j.state.Finished() && j.artifactReaders == 0
+		j.mu.Unlock()
+		if removable {
 			finished = append(finished, j)
 		}
 	}
@@ -375,7 +378,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}()
 		}
 		protected := r.URL.Path != "/api/access" && r.Method == "DELETE" || (r.Method == "POST" && (r.URL.Path == "/api/jobs" || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || ((r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") && (r.URL.Path == "/api/library" || r.URL.Path == "/api/dev/reset" || r.URL.Path == "/api/session" || r.URL.Path == "/api/preferences" || strings.HasPrefix(r.URL.Path, "/api/projects/") || strings.HasPrefix(r.URL.Path, "/api/folders") || strings.HasPrefix(r.URL.Path, "/api/drafts/") || strings.HasPrefix(r.URL.Path, "/api/assets/") || strings.HasPrefix(r.URL.Path, "/api/blobs/") || r.URL.Path == "/api/user-heads" || strings.HasPrefix(r.URL.Path, "/api/printer-connections")))
-		if s.cfg.BearerToken != "" && protected {
+		if s.cfg.BearerToken != "" && protected && r.URL.Path != "/mcp" {
 			if !s.authorized(r) {
 				w.Header().Set("WWW-Authenticate", "Bearer")
 				fail(w, 401, "access_token_required")
