@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
-	"strings"
 	"time"
 )
 
@@ -26,31 +24,28 @@ func (s *Server) deviceJob(st PrinterStatus) *deviceJob {
 	if h == nil || st.File == "" {
 		return nil
 	}
-	stem := func(name string) string {
-		return strings.TrimSuffix(strings.TrimSuffix(path.Base(name), ".3mf"), ".gcode")
-	}
+	var transfer Transfer
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	for i := len(h.list) - 1; i >= 0; i-- {
 		t := h.list[i]
-		if t.Printer != st.Printer || !t.Start || t.State != TransferDone || stem(t.Filename) != stem(st.File) {
-			continue
+		if t.Printer == st.Printer && t.Start && t.State == TransferDone && t.matchesFile(st.File) {
+			transfer = t
+			break
 		}
-		j := s.jobs.Get(t.Job)
-		if j == nil {
-			return nil
-		}
-		plate := j.Request.PlateIndex
-		if plate < 1 {
-			plate = 1
-		}
-		job := &deviceJob{ID: t.Job, Plate: plate, SentAt: t.Started}
-		if j.Request.Output == "gcode.3mf" {
-			job.Thumbnail = "/api/printer-connections/" + url.PathEscape(st.Printer) + "/job-thumbnail"
-		}
-		return job
 	}
-	return nil
+	h.mu.Unlock()
+	if transfer.Job == "" {
+		return nil
+	}
+	j := s.jobs.Get(transfer.Job)
+	if j == nil {
+		return nil
+	}
+	job := &deviceJob{ID: transfer.Job, Plate: max(1, j.Request.PlateIndex), SentAt: transfer.Started}
+	if j.Request.Output == "gcode.3mf" {
+		job.Thumbnail = "/api/printer-connections/" + url.PathEscape(st.Printer) + "/job-thumbnail"
+	}
+	return job
 }
 func (s *Server) printerJobThumbnail(w http.ResponseWriter, r *http.Request) {
 	st, ok := s.sends.hub.current(r.PathValue("printer"))

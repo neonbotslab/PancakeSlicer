@@ -213,7 +213,11 @@ func statusHTTP(ctx context.Context, h *hostSession, base *url.URL) (PrinterStat
 			st.State = "paused"
 		case word == "operational":
 			st.State = "idle"
-		case word == "cancelling", word == "finishing":
+		case word == "cancelling":
+			st.State, st.Detail = "busy", "cancelled"
+		case word == "cancelled", word == "canceled":
+			st.State, st.Detail = "idle", "cancelled"
+		case word == "finishing":
 			st.State = "busy"
 		case strings.Contains(word, "error"):
 			st.State = "failed"
@@ -258,6 +262,9 @@ func statusHTTP(ctx context.Context, h *hostSession, base *url.URL) (PrinterStat
 		pr := status.Printer
 		st.Detail = pr.State
 		st.State = map[string]string{"IDLE": "idle", "READY": "idle", "PRINTING": "printing", "PAUSED": "paused", "FINISHED": "finished", "STOPPED": "idle", "ERROR": "failed", "ATTENTION": "failed", "BUSY": "busy"}[pr.State]
+		if pr.State == "STOPPED" {
+			st.Detail = "cancelled"
+		}
 		if pr.Nozzle != nil {
 			st.Nozzle = &Temp{*pr.Nozzle, deref(pr.NozzleTarget)}
 		}

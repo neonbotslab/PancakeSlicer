@@ -67,6 +67,10 @@ func (c *flashforgeConsole) command(cmd string, timeout time.Duration) (string, 
 		if strings.EqualFold(line, "ok") {
 			return strings.Join(lines, "\n"), nil
 		}
+		lower := strings.ToLower(line)
+		if lower == "error" || strings.HasPrefix(lower, "error:") || strings.HasPrefix(lower, "error ") || strings.HasPrefix(lower, "open failed") {
+			return "", fmt.Errorf("The Flashforge printer rejected the command: %s", line)
+		}
 		if line != "" {
 			lines = append(lines, line)
 		}
@@ -101,6 +105,10 @@ func sendFlashforge(ctx context.Context, u *upload) (string, error) {
 		return "", err
 	}
 	defer c.close()
+	return c.upload(u, name)
+}
+
+func (c *flashforgeConsole) upload(u *upload, name string) (string, error) {
 	if _, err := c.command(fmt.Sprintf("M28 %d 0:/user/%s", u.size, name), 30*time.Second); err != nil {
 		return "", err
 	}
@@ -111,14 +119,13 @@ func sendFlashforge(ctx context.Context, u *upload) (string, error) {
 	if _, err := c.command("M29", 2*time.Minute); err != nil {
 		return "", fmt.Errorf("Hmm, the Flashforge printer didn't confirm it saved %s: %w", name, err)
 	}
-	if !u.start {
-		return "Uploaded " + name + " to " + u.printer.Name + ".", nil
+	if u.start {
+		u.starting()
+		if _, err := c.command("M23 0:/user/"+name, 30*time.Second); err != nil {
+			return "", fmt.Errorf("Uploaded %s, but couldn't start the print automatically: %w", name, err)
+		}
 	}
-	u.starting()
-	if _, err := c.command("M23 0:/user/"+name, 30*time.Second); err != nil {
-		return "", fmt.Errorf("Uploaded %s, but couldn't start the print automatically: %w", name, err)
-	}
-	return "Uploaded " + name + " to " + u.printer.Name + " and started printing.", nil
+	return "Uploaded " + name + " to " + u.printer.Name + ".", nil
 }
 
 func flashforgeClient(ctx context.Context, p *PrinterConfig) (*http.Client, string, error) {
@@ -195,9 +202,6 @@ func sendFlashforgeAPI(ctx context.Context, u *upload, name string) (string, err
 	defer resp.Body.Close()
 	if err := flashforgeReply(resp); err != nil {
 		return "", err
-	}
-	if u.start {
-		return "Uploaded " + name + " to " + u.printer.Name + " and started printing.", nil
 	}
 	return "Uploaded " + name + " to " + u.printer.Name + ".", nil
 }

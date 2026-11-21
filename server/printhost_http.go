@@ -20,13 +20,15 @@ import (
 )
 
 func sendHTTP(ctx context.Context, u *upload) (string, error) {
-	p := u.printer
-	base, _ := url.Parse(p.URL)
-	client, err := hostClient(ctx, p, base)
+	h, base, err := httpSession(ctx, u.printer, u.secret)
 	if err != nil {
 		return "", err
 	}
-	h := &hostSession{client: client, printer: p, secret: u.secret}
+	return h.upload(ctx, base, u)
+}
+
+func (h *hostSession) upload(ctx context.Context, base *url.URL, u *upload) (string, error) {
+	p := h.printer
 	probe := map[string]string{"prusalink": "/api/version", "octoprint": "/api/version", "moonraker": "/server/info"}[p.Kind]
 	if err := h.preflight(ctx, base.JoinPath(probe).String()); err != nil {
 		return "", err
@@ -85,10 +87,7 @@ func sendHTTP(ctx context.Context, u *upload) (string, error) {
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		return "", fmt.Errorf("The printer returned HTTP %d%s", resp.StatusCode, answer)
 	}
-	if u.start {
-		return "Uploaded " + u.filename + " to " + p.Name + " and started printing.", nil
-	}
-	return "Uploaded " + u.filename + " to " + p.Name + ".", nil
+	return u.placed() + ".", nil
 }
 
 func credentialsRejected(*PrinterConfig) error {

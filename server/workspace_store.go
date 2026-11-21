@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -82,6 +83,35 @@ type workspaceValue struct {
 	Revision uint64          `json:"revision"`
 	Document json.RawMessage `json:"document"`
 }
+
+const (
+	openDeviceAfterPrintKey = "orca.web.openDeviceAfterPrint"
+	openDeviceDelayKey      = "orca.web.openDeviceDelay"
+)
+
+func normalizePreferences(raw json.RawMessage) json.RawMessage {
+	var prefs map[string]json.RawMessage
+	if json.Unmarshal(raw, &prefs) != nil || prefs == nil {
+		prefs = map[string]json.RawMessage{}
+	}
+	var open *bool
+	validOpen := json.Unmarshal(prefs[openDeviceAfterPrintKey], &open) == nil && open != nil
+	if !validOpen {
+		prefs[openDeviceAfterPrintKey] = json.RawMessage(`true`)
+	}
+	var delay *float64
+	seconds := 5
+	if json.Unmarshal(prefs[openDeviceDelayKey], &delay) == nil && delay != nil {
+		seconds = int(math.Round(min(60, max(0, *delay))))
+	}
+	value := json.RawMessage(strconv.Itoa(seconds))
+	if validOpen && bytes.Equal(prefs[openDeviceDelayKey], value) {
+		return raw
+	}
+	prefs[openDeviceDelayKey] = value
+	return must(json.Marshal(prefs))
+}
+
 type workspaceReceipt struct {
 	Digest   string          `json:"digest"`
 	Response json.RawMessage `json:"response"`
@@ -718,7 +748,9 @@ func (st *workspaceStore) register(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/"+value.kind, func(w http.ResponseWriter, r *http.Request) {
 			st.view(w, func(d *workspaceData) {
 				v := d.Values[kind]
-				if v.Document == nil {
+				if kind == "preferences" {
+					v.Document = normalizePreferences(v.Document)
+				} else if v.Document == nil {
 					v.Document = json.RawMessage(`{}`)
 				}
 				writeJSON(w, 200, v)
@@ -954,12 +986,20 @@ func (st *workspaceStore) putValue(w http.ResponseWriter, r *http.Request, kind 
 		if v.Revision != in.ExpectedRevision {
 			failure := workspaceError("revision_conflict", "Heads up — someone else changed saved "+kind+". Reload before applying your changes!", "reload_and_reapply", v.Revision)
 			failure["document"] = v.Document
+			if kind == "preferences" {
+				failure["document"] = normalizePreferences(v.Document)
+			}
 			writeJSON(w, 409, failure)
 			return
 		}
 		v = workspaceValue{v.Revision + 1, in.Document}
+		response := map[string]any{"revision": v.Revision, "operationId": in.OperationID}
+		if kind == "preferences" {
+			v.Document = normalizePreferences(v.Document)
+			response["document"] = v.Document
+		}
 		d.Values[kind] = v
-		if st.commit(w, d, in.OperationID, digest, map[string]any{"revision": v.Revision, "operationId": in.OperationID}) && kind == "session" {
+		if st.commit(w, d, in.OperationID, digest, response) && kind == "session" {
 			st.sessionWritten()
 		}
 	})

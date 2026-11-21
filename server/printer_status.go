@@ -215,6 +215,7 @@ func (h *statusHub) set(from *monitor, st PrinterStatus) {
 		st.LastSeen = h.lastSeen[key]
 	}
 	st.Link = from.link
+	previous := prev
 	prev.At, st.At = time.Time{}, time.Time{}
 	a, _ := json.Marshal(prev)
 	b, _ := json.Marshal(st)
@@ -224,12 +225,10 @@ func (h *statusHub) set(from *monitor, st PrinterStatus) {
 		return
 	}
 	h.status[key] = st
+	h.m.history.observe(previous, st)
 	close(h.wake)
 	h.wake = make(chan struct{})
 	h.mu.Unlock()
-	if h.m.history.confirmStarted(st) || h.m.history.recordEnd(st) {
-		h.bump()
-	}
 }
 
 func (h *statusHub) current(key string) (PrinterStatus, bool) {
@@ -372,6 +371,13 @@ type sendHistory struct {
 	list []Transfer
 }
 
+type sendHistoryFile struct {
+	Version int        `json:"version"`
+	Sends   []Transfer `json:"sends"`
+}
+
+const sendHistoryVersion = 1
+
 const sendHistoryCap = 5000
 
 const jobEndStale = 5 * time.Second
@@ -392,9 +398,7 @@ func loadSendHistory(dir string) *sendHistory {
 		}
 		return h
 	}
-	var file struct {
-		Sends []Transfer `json:"sends"`
-	}
+	var file sendHistoryFile
 	if err := json.Unmarshal(b, &file); err != nil {
 		log.Printf("warning: send history %s is not valid JSON; kept as %s.invalid", h.path, h.path)
 		os.Rename(h.path, h.path+".invalid")
@@ -423,19 +427,21 @@ func loadSendHistory(dir string) *sendHistory {
 		}
 	}
 	stale, ran := 0, 0
-	for i := range h.list {
-		t := &h.list[i]
-		if t.JobEnd == "" || t.Running || t.JobEndAt == nil {
-			continue
+	if file.Version < sendHistoryVersion {
+		for i := range h.list {
+			t := &h.list[i]
+			if t.JobEnd == "" || t.Running || t.JobEndAt == nil {
+				continue
+			}
+			if t.Finished != nil && t.JobEndAt.Sub(*t.Finished) < jobEndStale {
+				log.Printf("send history: cleared %s of %s on %s (%s): reported %s after the send, before the job ran", t.JobEnd, t.Filename, t.Name, t.ID, t.JobEndAt.Sub(*t.Finished).Round(time.Second))
+				t.JobEnd, t.JobEndAt = "", nil
+				stale++
+			} else {
+				t.Running = true
+			}
+			ran++
 		}
-		if t.Finished != nil && t.JobEndAt.Sub(*t.Finished) < jobEndStale {
-			log.Printf("send history: cleared %s of %s on %s (%s): reported %s after the send, before the job ran", t.JobEnd, t.Filename, t.Name, t.ID, t.JobEndAt.Sub(*t.Finished).Round(time.Second))
-			t.JobEnd, t.JobEndAt = "", nil
-			stale++
-		} else {
-			t.Running = true
-		}
-		ran++
 	}
 	if stale > 0 {
 		log.Printf("send history: cleared %d job ends reported before their job ran", stale)
@@ -508,9 +514,7 @@ func (h *sendHistory) record(t Transfer) {
 }
 
 func (h *sendHistory) writeLocked() {
-	b, _ := json.MarshalIndent(struct {
-		Sends []Transfer `json:"sends"`
-	}{h.list}, "", " ")
+	b, _ := json.MarshalIndent(sendHistoryFile{Version: sendHistoryVersion, Sends: h.list}, "", " ")
 	if err := writeFileAtomic(h.path, b); err != nil {
 		log.Printf("warning: cannot save the send history: %v", err)
 	}
@@ -520,35 +524,108 @@ func sendStem(name string) string {
 	return strings.TrimSuffix(strings.TrimSuffix(filepath.Base(name), ".3mf"), ".gcode")
 }
 
-func (h *sendHistory) confirmStarted(st PrinterStatus) bool {
-	if h == nil || !st.Online || (st.State != "printing" && st.State != "busy" && st.State != "paused") || st.File == "" {
-		return false
+func (t Transfer) matchesFile(file string) bool {
+	name := t.Filename
+	switch t.Kind {
+	case "moonraker":
+		return name == strings.TrimPrefix(file, "/")
+	case "duet":
+		return name == strings.TrimPrefix(file, "0:/gcodes/")
+	case "flashforge":
+		name = flashforgeFilename(name)
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for i := len(h.list) - 1; i >= 0; i-- {
-		t := &h.list[i]
-		if t.Printer != st.Printer || !t.Start {
-			continue
-		}
-		if t.Outcome != "unconfirmed" || st.At.Before(t.Started) || sendStem(t.Filename) != sendStem(st.File) {
-			return false
-		}
-		t.Outcome, t.Message = "printing", "Printing started; confirmed by the printer."
-		h.writeLocked()
-		return true
-	}
-	return false
+	return sendStem(name) == sendStem(file)
 }
 
-func (h *sendHistory) recordEnd(st PrinterStatus) bool {
-	end := map[string]string{"finished": "finished", "failed": "failed"}[st.State]
-	if st.State == "idle" && st.Detail == "cancelled" {
-		end = "cancelled"
+func (t Transfer) matchesStatus(st PrinterStatus) bool {
+	started := t.Started
+	if t.Kind == "bambu-lan" {
+		started = started.Truncate(time.Second)
 	}
-	running := st.State == "printing" || st.State == "paused" || st.State == "busy"
-	if h == nil || !st.Online || end == "" && !running || st.File == "" {
+	return !st.At.Before(t.Started) && (st.StartedAt == nil || !st.StartedAt.Before(started)) && t.matchesFile(st.File)
+}
+
+func (t Transfer) activePrint(st PrinterStatus) bool {
+	detail := strings.ToLower(st.Detail)
+	if t.Kind == "duet" && detail == "simulating" || t.Kind == "octoprint" && (detail == "starting" || strings.HasPrefix(detail, "sending")) {
 		return false
+	}
+	return st.State == "printing" || st.State == "paused" || t.Kind == "bambu-lan" && st.State == "busy" && st.Detail == "PREPARE"
+}
+
+func (st PrinterStatus) jobEnd() string {
+	if st.Detail == "cancelled" && (st.State == "idle" || st.State == "busy") {
+		return "cancelled"
+	}
+	return map[string]string{"finished": "finished", "failed": "failed"}[st.State]
+}
+
+func (t *Transfer) applyStatus(previous, st PrinterStatus) bool {
+	active := t.active()
+	if !t.Start || t.Printer != st.Printer || !st.Online || t.JobEnd != "" ||
+		!active && (t.State != TransferDone || t.Outcome != "printing" && t.Outcome != "unconfirmed") {
+		return false
+	}
+	end := st.jobEnd()
+	if end != "" && previous.Online && t.activePrint(previous) && t.matchesFile(previous.File) {
+		if st.File == "" || st.StartedAt == nil && t.matchesFile(st.File) {
+			if !t.matchesStatus(previous) {
+				return false
+			}
+			st.File = cmpOr(st.File, previous.File)
+			if st.StartedAt == nil {
+				st.StartedAt = previous.StartedAt
+			}
+		}
+	}
+	if st.File == "" || !t.matchesStatus(st) {
+		return false
+	}
+	if end == "" {
+		if !t.activePrint(st) {
+			return false
+		}
+		changed := !t.Running
+		t.Running = true
+		return t.confirmObservedStart() || changed
+	}
+	if !t.Running {
+		if end == "finished" || previous.jobEnd() != "" && t.matchesFile(previous.File) && st.StartedAt == nil {
+			return false
+		}
+		if st.StartedAt == nil && !previous.Online {
+			return t.awaitStartConfirmation()
+		}
+	}
+	t.JobEnd, t.JobEndAt = end, &st.At
+	if end == "failed" {
+		t.JobErrors = st.Messages
+	}
+	return true
+}
+
+func (t *Transfer) confirmObservedStart() bool {
+	if t.State != TransferDone || t.Outcome != "unconfirmed" || !t.Running || t.JobEnd != "" {
+		return false
+	}
+	t.Outcome, t.Message = "printing", "Printing started; confirmed by the printer."
+	return true
+}
+
+func (t *Transfer) awaitStartConfirmation() bool {
+	if t.Outcome == "unconfirmed" {
+		return false
+	}
+	t.Outcome = "unconfirmed"
+	if t.State == TransferDone {
+		t.Message = "Uploaded " + t.Filename + " to " + t.Name + ". Waiting for the printer to confirm the start."
+	}
+	return true
+}
+
+func (h *sendHistory) observe(previous, st PrinterStatus) {
+	if h == nil || !st.Online {
+		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -557,27 +634,11 @@ func (h *sendHistory) recordEnd(st PrinterStatus) bool {
 		if t.Printer != st.Printer || !t.Start {
 			continue
 		}
-		if t.Outcome != "printing" || t.JobEnd != "" || st.At.Before(t.Started) || sendStem(t.Filename) != sendStem(st.File) {
-			return false
+		if t.applyStatus(previous, st) {
+			h.writeLocked()
 		}
-		if running || !t.Running {
-			changed := running && !t.Running
-			t.Running = t.Running || running
-			if changed {
-				h.writeLocked()
-			}
-			return changed
-		}
-		t.JobEnd = end
-		at := st.At
-		t.JobEndAt = &at
-		if end == "failed" {
-			t.JobErrors = st.Messages
-		}
-		h.writeLocked()
-		return true
+		return
 	}
-	return false
 }
 
 func (h *sendHistory) cards() map[string]string {
@@ -595,6 +656,19 @@ func (h *sendHistory) cards() map[string]string {
 		}
 	}
 	return out
+}
+
+func (h *sendHistory) lookup(id string) (Transfer, bool) {
+	if h != nil {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for i := len(h.list) - 1; i >= 0; i-- {
+			if t := h.list[i]; t.ID == id {
+				return t, true
+			}
+		}
+	}
+	return Transfer{}, false
 }
 
 func (h *sendHistory) recent(age time.Duration) []Transfer {

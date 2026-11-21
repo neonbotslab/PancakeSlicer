@@ -96,7 +96,7 @@ func sendDuet(ctx context.Context, u *upload) (string, error) {
 	if err := duetGcode(ctx, h, base, `M32 "0:/gcodes/`+u.filename+`"`); err != nil {
 		return "", fmt.Errorf("Uploaded %s, but couldn't start the print automatically: %w", u.filename, err)
 	}
-	return "Uploaded " + u.filename + " to " + u.printer.Name + " and started printing.", nil
+	return u.placed() + ".", nil
 }
 
 func controlDuet(ctx context.Context, p *PrinterConfig, secret, action string) error {

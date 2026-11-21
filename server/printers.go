@@ -462,6 +462,11 @@ func (s *Server) getSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if t := j.transferView(); t != nil {
+		if t.Outcome == "unconfirmed" || t.Outcome == "printing" {
+			if recorded, ok := s.sends.history.lookup(t.ID); ok && !recorded.active() {
+				t = &recorded
+			}
+		}
 		writeJSON(w, 200, t)
 		return
 	}
@@ -765,6 +770,17 @@ func (u *upload) placed() string {
 	return "Uploaded " + u.filename + " to " + u.printer.Name
 }
 
+func (u *upload) result(message string) (outcome, detail string) {
+	switch {
+	case !u.start:
+		return "uploaded", message
+	case u.outcome != "":
+		return u.outcome, message
+	default:
+		return "unconfirmed", message + " Waiting for the printer to confirm the start."
+	}
+}
+
 type bambuOptions struct {
 	bedLeveling, timelapse, vibrationCali, useAMS bool
 	flowCali                                      flowCalibrationMode
@@ -790,10 +806,12 @@ func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j 
 			m.mu.Unlock()
 		}, options: options, resend: resend, checkStart: checkStart}
 	var message string
+	var before PrinterStatus
 	secret, err := p.secret()
 	u.secret = secret
 	if err == nil {
 		if status, ok := m.hub.current(p.Printer); ok && status.Online {
+			before = status
 			u.internalStorage = status.InternalStorage
 			if t.Start && (status.State == "printing" || status.State == "paused" || status.State == "busy") {
 				err = &connError{"busy", "the printer is " + status.State + "; wait for its current job to finish"}
@@ -824,8 +842,21 @@ func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j 
 		}
 		cancelled = errors.Is(context.Cause(ctx), errSendCancelled)
 	}
+	view := m.finishTransfer(j, t, u, before, message, err, cancelled)
+	m.mu.Lock()
+	delete(m.busy, p.Printer)
+	delete(m.live, p.Printer)
+	m.mu.Unlock()
+	m.hub.changed()
+	audit(map[string]any{"event": "send_" + string(view.State), "job_id": j.ID, "printer": p.Printer, "kind": p.Kind, "client": client, "start_print": view.Start, "bytes": view.Sent, "on_card": u.onCard, "duration_ms": time.Since(began).Milliseconds(), "error": view.Error})
+}
+
+func (m *SendManager) finishTransfer(j *Job, t *Transfer, u *upload, before PrinterStatus, message string, err error, cancelled bool) Transfer {
 	finished := time.Now().UTC()
 	j.mu.Lock()
+	defer j.mu.Unlock()
+	m.hub.mu.Lock()
+	defer m.hub.mu.Unlock()
 	t.Finished = &finished
 	switch {
 	case cancelled:
@@ -838,28 +869,22 @@ func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j 
 		t.Reason, t.Recovery = sendFailure(err)
 		t.to(TransferFailed)
 	default:
+		t.Outcome, message = u.result(message)
 		t.Message = redact(message, u.secret)
-		t.Outcome = u.outcome
-		if !t.Start {
-			t.Outcome = "uploaded"
-		} else if t.Outcome == "" {
-			t.Outcome = "printing"
-		}
 		t.to(TransferDone)
+		if observed, ok := m.history.lookup(t.ID); ok && observed.active() {
+			t.Running, t.JobEnd, t.JobEndAt, t.JobErrors = observed.Running, observed.JobEnd, observed.JobEndAt, observed.JobErrors
+			if observed.Outcome == "unconfirmed" && !t.Running && t.JobEnd == "" {
+				t.awaitStartConfirmation()
+			}
+		}
+		t.applyStatus(before, m.hub.status[t.Printer])
+		t.confirmObservedStart()
 	}
 	view := *t
 	view.Sent = t.sent.Load()
-	j.mu.Unlock()
-	m.mu.Lock()
-	delete(m.busy, p.Printer)
-	delete(m.live, p.Printer)
-	m.mu.Unlock()
 	m.history.record(view)
-	if current, ok := m.hub.current(p.Printer); ok {
-		m.history.confirmStarted(current)
-	}
-	m.hub.changed()
-	audit(map[string]any{"event": "send_" + string(view.State), "job_id": j.ID, "printer": p.Printer, "kind": p.Kind, "client": client, "start_print": t.Start, "bytes": view.Sent, "on_card": u.onCard, "duration_ms": time.Since(began).Milliseconds(), "error": view.Error})
+	return view
 }
 
 func sendFailure(err error) (string, string) {
@@ -890,7 +915,7 @@ func (m *SendManager) activeTransfers() []Transfer {
 	m.mu.Unlock()
 	out := []Transfer{}
 	for _, j := range jobs {
-		if t := j.transferView(); t != nil {
+		if t := j.transferView(); t != nil && t.active() {
 			out = append(out, *t)
 		}
 	}

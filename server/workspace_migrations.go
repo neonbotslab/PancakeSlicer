@@ -35,6 +35,8 @@ const migrationDraftLifecycle = "draft-lifecycle"
 
 const migrationSnapshotMixes = "snapshot-mixes-by-id"
 
+const migrationOpenDeviceAfterPrint = "open-device-after-print"
+
 func migrateWorkspace(d *workspaceData, now time.Time, root string) ([]string, error) {
 	var ran []string
 	mark := func(id string) {
@@ -121,6 +123,14 @@ func migrateWorkspace(d *workspaceData, now time.Time, root string) ([]string, e
 	if _, done := d.Migrations[migrationDraftLifecycle]; !done {
 		retireUnreachableDrafts(d)
 		mark(migrationDraftLifecycle)
+	}
+	if _, done := d.Migrations[migrationOpenDeviceAfterPrint]; !done {
+		v := d.Values["preferences"]
+		if normalized := normalizePreferences(v.Document); !bytes.Equal(normalized, v.Document) {
+			v.Document, v.Revision = normalized, v.Revision+1
+			d.Values["preferences"] = v
+		}
+		mark(migrationOpenDeviceAfterPrint)
 	}
 	return ran, nil
 }

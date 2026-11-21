@@ -223,6 +223,7 @@ func sendElegoo(ctx context.Context, u *upload) (string, error) {
 	if err := start(ctx, u); err != nil {
 		return "", err
 	}
+	u.outcome = "printing"
 	return "Uploaded " + u.filename + " to " + p.Name + " and started printing.", nil
 }
 
@@ -555,8 +556,11 @@ func elegooStatus(s *sdcpStatus) PrinterStatus {
 	case slices.ContainsFunc(s.CurrentStatus, func(v int) bool { return v != 0 }):
 		st.State = "busy"
 	}
-	if pi := s.PrintInfo; pi != nil && (st.State == "printing" || st.State == "paused") {
+	if pi := s.PrintInfo; pi != nil && (st.State == "printing" || st.State == "paused" || st.State == "finished" || st.State == "failed") {
 		st.File = strings.TrimPrefix(pi.Filename, "/local/")
+		if st.State == "finished" || st.State == "failed" {
+			return st
+		}
 		if pi.TotalLayer > 0 {
 			st.Layer, st.Layers = ptr(pi.CurrentLayer), ptr(pi.TotalLayer)
 		}
