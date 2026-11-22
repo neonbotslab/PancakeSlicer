@@ -140,7 +140,7 @@ func TestPrinterAPIAuthAndRoutes(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
-			if w.Code != 401 || w.Header().Get("WWW-Authenticate") != "Bearer" {
+			if w.Code != 401 || w.Header().Get("WWW-Authenticate") != "Bearer" || w.Header().Get("Cache-Control") != "no-store" {
 				t.Fatalf("unauthorized %s got %d", path, w.Code)
 			}
 		}
@@ -164,7 +164,7 @@ func TestPrinterAPIAuthAndRoutes(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer fixture-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
-	if w.Code != 404 {
+	if w.Code != 404 || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(w.Code)
 	}
 }

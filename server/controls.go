@@ -378,7 +378,10 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}()
 		}
 		protected := r.URL.Path != "/api/access" && r.Method == "DELETE" || (r.Method == "POST" && (r.URL.Path == "/api/jobs" || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || ((r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") && (r.URL.Path == "/api/library" || r.URL.Path == "/api/dev/reset" || r.URL.Path == "/api/session" || r.URL.Path == "/api/preferences" || strings.HasPrefix(r.URL.Path, "/api/projects/") || strings.HasPrefix(r.URL.Path, "/api/folders") || strings.HasPrefix(r.URL.Path, "/api/drafts/") || strings.HasPrefix(r.URL.Path, "/api/assets/") || strings.HasPrefix(r.URL.Path, "/api/blobs/") || r.URL.Path == "/api/user-heads" || strings.HasPrefix(r.URL.Path, "/api/printer-connections")))
-		protected = protected || strings.HasPrefix(r.URL.Path, "/api/printers/")
+		if strings.HasPrefix(r.URL.Path, "/api/printers/") {
+			w.Header().Set("Cache-Control", "no-store")
+			protected = true
+		}
 		if s.cfg.BearerToken != "" && protected && r.URL.Path != "/mcp" {
 			if !s.authorized(r) {
 				w.Header().Set("WWW-Authenticate", "Bearer")
