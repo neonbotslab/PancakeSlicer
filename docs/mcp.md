@@ -44,6 +44,11 @@ The client must already be able to reach the server. A local client on the tailn
 
 | Tool | Result or explicit write |
 | --- | --- |
+| `list_shelf` | Reusable model folders, blobs, and the current shelf revision. |
+| `upload_shelf_model` | Saves a model or ZIP tree to the shelf with revision checks. |
+| `add_shelf_model_to_plate` | Adds shelf geometry to a saved plate through the project save transaction. |
+| `prepare_shelf_delete` | Prepares the exact shelf deletion summary for human approval. |
+| `confirm_shelf_delete` | Consumes an approved session-bound token and deletes those shelf items. |
 | `list_projects` | Active saved projects and revisions. |
 | `get_project` | Saved document and source asset references. |
 | `list_plates` | Saved plate indexes and object counts. |
@@ -69,6 +74,8 @@ The client must already be able to reach the server. A local client on the tailn
 | `confirm_print` | Consumes an approval token and sends and starts its exact prepared job. |
 
 Printer IDs identify saved printer setups. They are not hardware serial numbers. Bambu nozzle extruder index 0 is left and index 1 is right on a dual-nozzle printer. Printer status includes timestamps so clients can distinguish a current report from an offline report. Preparation and confirmation require a fresh online, ready report.
+
+Shelf arguments, limits, persistence, and deletion confirmation are described in [Model shelf API](model-shelf.md).
 
 ## Persistent settings
 

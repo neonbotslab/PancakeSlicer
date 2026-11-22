@@ -78,6 +78,8 @@ func (s *Server) resetAll(epoch string) error {
 		}
 		m.hub.changed()
 	}
+	s.blobs.mu.Lock()
+	defer s.blobs.mu.Unlock()
 	st := s.workspace
 	st.mu.Lock()
 	err := clearDir(st.root)
@@ -89,13 +91,11 @@ func (s *Server) resetAll(epoch string) error {
 	thumbnails.Lock()
 	thumbnails.m = map[string]thumbnailEntry{}
 	thumbnails.Unlock()
-	s.blobs.mu.Lock()
 	err = clearDir(s.blobs.root)
-	s.blobs.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	for _, dir := range []string{"profile-backups", "user-presets", "nonplanar", "profile-library.json"} {
+	for _, dir := range []string{"profile-backups", "user-presets", "nonplanar", "profile-library.json", "shelf-thumbnails"} {
 		if err := os.RemoveAll(filepath.Join(s.cfg.DataDir, dir)); err != nil {
 			return err
 		}

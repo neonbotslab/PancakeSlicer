@@ -18,9 +18,10 @@ import (
 )
 
 type blobStore struct {
-	root  string
-	limit int64
-	mu    sync.Mutex
+	root     string
+	limit    int64
+	mu       sync.Mutex
+	retained func() (map[string]bool, error)
 }
 
 var blobDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -84,6 +85,9 @@ func (b *blobStore) put(w http.ResponseWriter, r *http.Request, maxUpload int64)
 	defer os.Remove(f.Name())
 	hash := sha256.New()
 	_, err = io.Copy(io.MultiWriter(f, hash), http.MaxBytesReader(w, r.Body, maxUpload))
+	if err == nil {
+		err = f.Sync()
+	}
 	err = errors.Join(err, f.Close())
 	var tooLarge *http.MaxBytesError
 	var timeout net.Error
@@ -103,7 +107,18 @@ func (b *blobStore) put(w http.ResponseWriter, r *http.Request, maxUpload int64)
 		fail(w, 400, "uploaded_files_checksum_didnt")
 		return
 	}
-	if err := os.Chmod(f.Name(), 0400); err != nil || os.Rename(f.Name(), b.path(sum)) != nil {
+	b.mu.Lock()
+	if !b.has(sum) {
+		err = os.Chmod(f.Name(), 0400)
+		if err == nil {
+			err = os.Rename(f.Name(), b.path(sum))
+		}
+	}
+	if err == nil {
+		err = syncWorkspaceDirectory(dir)
+	}
+	b.mu.Unlock()
+	if err != nil {
 		fail(w, 507, "server_couldnt_save_uploaded")
 		return
 	}
@@ -137,6 +152,14 @@ func (b *blobStore) evict() {
 		return
 	}
 	defer b.mu.Unlock()
+	retained := map[string]bool{}
+	if b.retained != nil {
+		var err error
+		retained, err = b.retained()
+		if err != nil {
+			return
+		}
+	}
 	type entry struct {
 		path string
 		size int64
@@ -145,7 +168,7 @@ func (b *blobStore) evict() {
 	var entries []entry
 	var total int64
 	filepath.WalkDir(b.root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !blobDigest.MatchString(d.Name()) {
+		if err != nil || d.IsDir() || !blobDigest.MatchString(d.Name()) || retained[d.Name()] {
 			return nil
 		}
 		if info, err := d.Info(); err == nil {

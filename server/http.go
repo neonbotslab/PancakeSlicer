@@ -75,6 +75,8 @@ func NewServer(c Config, jobs *JobManager, catalog *resolve.Catalog) http.Handle
 	s.versionRoutes(mux)
 	s.blobs = &blobStore{root: filepath.Join(c.DataDir, "blobs"), limit: blobCacheBytes}
 	s.blobs.register(mux, c.MaxUploadSize)
+	s.blobs.retained = s.retainedShelfBlobs
+	s.shelfRoutes(mux)
 	mux.HandleFunc("POST /api/imports/url", s.importFromURL)
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		q, n := jobs.Counts()

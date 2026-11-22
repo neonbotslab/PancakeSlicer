@@ -27,13 +27,14 @@ import (
 const mcpClientHeader = "X-Pancake-MCP-Client"
 
 type mcpService struct {
-	server    *Server
-	now       func() time.Time
-	ttl       time.Duration
-	mu        sync.Mutex
-	prepared  map[string]*mcpPreparedPrint
-	preparing int
-	copies    chan struct{}
+	server               *Server
+	now                  func() time.Time
+	ttl                  time.Duration
+	mu                   sync.Mutex
+	prepared             map[string]*mcpPreparedPrint
+	preparedShelfDeletes map[string]mcpPreparedShelfDelete
+	preparing            int
+	copies               chan struct{}
 }
 
 type mcpPreparedPrint struct {
@@ -82,6 +83,7 @@ func (service *mcpService) handler() http.Handler {
 	protocol := mcp.NewServer(&mcp.Implementation{Name: "PancakeSlicer", Version: "1.0.0"}, nil)
 	service.addDataTools(protocol)
 	service.addSettingsTools(protocol)
+	service.addShelfTools(protocol)
 	mcpTool(protocol, "prepare_print", "Validate a completed slice and prepare a print without sending it. Show the FULL returned summary to the human and obtain explicit approval before confirm_print. Stores approval metadata and a short-lived single-use token. No printer upload occurs.", false, service.preparePrint)
 	mcpTool(protocol, "confirm_print", "Send and start ONLY the exact prepared print after the human explicitly approves its full summary. Requires the token, exact digest, and human_approved=true. Tokens are session-bound, expire, and are consumed on every confirmation attempt. Elicitation must also be accepted when supported. Never call automatically or infer approval.", false, service.confirmPrint)
 	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return protocol }, &mcp.StreamableHTTPOptions{SessionTimeout: 15 * time.Minute})
@@ -124,7 +126,10 @@ func newMCPService(s *Server) *mcpService {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	return &mcpService{server: s, now: time.Now, ttl: ttl, prepared: make(map[string]*mcpPreparedPrint), copies: make(chan struct{}, 2)}
+	return &mcpService{
+		server: s, now: time.Now, ttl: ttl, prepared: make(map[string]*mcpPreparedPrint),
+		preparedShelfDeletes: make(map[string]mcpPreparedShelfDelete), copies: make(chan struct{}, 2),
+	}
 }
 
 func mcpTool[In any](server *mcp.Server, name, description string, readOnly bool, handler func(context.Context, *mcp.CallToolRequest, In) (map[string]any, error)) {

@@ -812,53 +812,84 @@ func workspaceProjectStateOf(p workspaceProject, exists bool) workspaceProjectSt
 	}
 }
 
+type projectWriteInput struct {
+	OperationID      string          `json:"operationId"`
+	ExpectedRevision uint64          `json:"expectedRevision"`
+	Record           json.RawMessage `json:"record"`
+	Name             string          `json:"name"`
+	NewID            string          `json:"newId"`
+}
+
+type projectSaveEdit struct {
+	intent         any
+	transientLease bool
+	apply          func(workspaceProject) (json.RawMessage, map[string]any, error)
+}
+
 func (st *workspaceStore) projectWrite(w http.ResponseWriter, r *http.Request, action string) {
-	var in struct {
-		OperationID      string          `json:"operationId"`
-		ExpectedRevision uint64          `json:"expectedRevision"`
-		Record           json.RawMessage `json:"record"`
-		Name             string          `json:"name"`
-		NewID            string          `json:"newId"`
+	var in projectWriteInput
+	if workspaceDecode(w, r, &in) {
+		st.writeProject(w, r, action, in, nil)
 	}
-	if !workspaceDecode(w, r, &in) {
+}
+
+func (st *workspaceStore) projectWriteTarget(w http.ResponseWriter, r *http.Request, d *workspaceData, action string, in projectWriteInput, edit *projectSaveEdit) (id string, p workspaceProject, digest string, ok bool) {
+	id, aliasErr := canonicalWorkspaceProject(d, r.PathValue("id"))
+	if aliasErr != nil {
+		workspaceFailure(w, 409, "project_alias_invalid", aliasErr.Error(), "repair_aliases", 0)
 		return
 	}
+	if edit == nil {
+		digest = workspaceDigest([]any{action, id, in})
+	} else {
+		digest = workspaceDigest([]any{action, id, in, edit.intent})
+	}
+	if workspaceReplay(w, d, in.OperationID, digest) {
+		return
+	}
+	p, exists := d.Projects[id]
+	if action != "duplicate" && st.leaseConflict(w, id, r.Header.Get(sessionHeader), p.Revision) {
+		return
+	}
+	state := workspaceProjectStateOf(p, exists)
+	if !workspaceProjectActions[state][action] || edit != nil && state == projectAbsent {
+		switch state {
+		case projectAbsent:
+			workspaceFailure(w, 404, "project_missing", "Project not found.", "open_projects", 0)
+		case projectTombstone:
+			workspaceFailure(w, 410, "project_archived", "This deleted project doesn't have a saved document to restore. Keep its deletion marker and open another project!", "open_projects", p.Revision)
+		case projectTrashed:
+			workspaceFailure(w, 410, "project_archived", "This project is in the Trash! Restore it first before saving.", "restore_project", p.Revision)
+		default:
+			workspaceFailure(w, 409, "project_not_archived", "This project isn't in the Trash!", "open_project", p.Revision)
+		}
+		return
+	}
+	if p.Revision != in.ExpectedRevision {
+		workspaceFailure(w, 409, "revision_conflict", "Heads up — someone else changed this project! Reload it or keep a separate copy.", "reload_and_reapply", p.Revision)
+		return
+	}
+	return id, p, digest, true
+}
+
+func (st *workspaceStore) writeProject(w http.ResponseWriter, r *http.Request, action string, in projectWriteInput, edit *projectSaveEdit) {
 	st.locked(w, func(d *workspaceData) {
-		id, aliasErr := canonicalWorkspaceProject(d, r.PathValue("id"))
-		if aliasErr != nil {
-			workspaceFailure(w, 409, "project_alias_invalid", aliasErr.Error(), "repair_aliases", 0)
+		id, p, digest, ok := st.projectWriteTarget(w, r, d, action, in, edit)
+		if !ok {
 			return
 		}
-		digest := workspaceDigest([]any{action, id, in})
-		if workspaceReplay(w, d, in.OperationID, digest) {
-			return
-		}
-		p, exists := d.Projects[id]
-		if action != "duplicate" && st.leaseConflict(w, id, r.Header.Get(sessionHeader), p.Revision) {
-			return
-		}
-		if state := workspaceProjectStateOf(p, exists); !workspaceProjectActions[state][action] {
-			switch state {
-			case projectAbsent:
-				workspaceFailure(w, 404, "project_missing", "Project not found.", "open_projects", 0)
-			case projectTombstone:
-				workspaceFailure(w, 410, "project_archived", "This deleted project doesn't have a saved document to restore. Keep its deletion marker and open another project!", "open_projects", p.Revision)
-			case projectTrashed:
-				workspaceFailure(w, 410, "project_archived", "This project is in the Trash! Restore it first before saving.", "restore_project", p.Revision)
-			default:
-				workspaceFailure(w, 409, "project_not_archived", "This project isn't in the Trash!", "open_project", p.Revision)
-			}
-			return
-		}
-		if p.Revision != in.ExpectedRevision {
-			workspaceFailure(w, 409, "revision_conflict", "Heads up — someone else changed this project! Reload it or keep a separate copy.", "reload_and_reapply", p.Revision)
-			return
-		}
+
 		next, revision := p, p.Revision+1
 		var err error
+		var details map[string]any
 		switch action {
 		case "save":
-			next, err = withRecord(p, id, in.Record, revision)
+			if edit != nil {
+				in.Record, details, err = edit.apply(p)
+			}
+			if err == nil {
+				next, err = withRecord(p, id, in.Record, revision)
+			}
 			if err == nil {
 				err = st.checkAssets(next.Record)
 			}
@@ -907,14 +938,18 @@ func (st *workspaceStore) projectWrite(w http.ResponseWriter, r *http.Request, a
 		}
 		next.Versions = withVersion(next, next.Revision, sha, next.Record, change, action, time.Now().UnixMilli())
 		d.Projects[id] = next
-		response := any(map[string]any{"revision": next.Revision, "operationId": in.OperationID})
+		if details == nil {
+			details = map[string]any{}
+		}
+		details["revision"], details["operationId"] = next.Revision, in.OperationID
+		response := any(details)
 		if action == "duplicate" {
 			response = json.RawMessage(projectMeta(next))
 		}
 		if !st.commit(w, d, in.OperationID, digest, response) {
 			return
 		}
-		if action == "save" {
+		if action == "save" && (edit == nil || !edit.transientLease) {
 			st.claimLease(id, r.Header.Get(sessionHeader))
 		}
 		st.pruneVersionFiles(id, next.Versions)

@@ -59,6 +59,7 @@ func (l *libraryStore) wait() <-chan struct{} {
 }
 
 type libraryEnvelope struct {
+	Shelf      *shelfDocument                `json:"shelf,omitempty"`
 	Document   map[string]json.RawMessage    `json:"document"`
 	Operations map[string]libraryReceipt     `json:"operations"`
 	Migrations []libraryMigration            `json:"migrations,omitempty"`
