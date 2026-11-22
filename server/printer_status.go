@@ -21,6 +21,7 @@ type statusHub struct {
 	m         *SendManager
 	mu        sync.Mutex
 	subs      int
+	passive   map[string]*time.Timer
 	status    map[string]PrinterStatus
 	lastSeen  map[string]*time.Time
 	monitors  map[string]*monitor
@@ -30,11 +31,12 @@ type statusHub struct {
 }
 
 type bambuHeard struct {
-	echo   *bambuEcho
-	trays  bool
-	full   bool
-	state  []AMSTray
-	status *PrinterStatus
+	echo      *bambuEcho
+	trays     bool
+	full      bool
+	telemetry bool
+	state     []AMSTray
+	status    *PrinterStatus
 }
 
 type bambuEcho struct {
@@ -79,10 +81,11 @@ func (h *statusHub) heard(from *monitor, r bambuHeard) {
 }
 
 type monitor struct {
-	cfg    *PrinterConfig
-	cancel context.CancelFunc
-	poke   chan struct{}
-	link   LinkState
+	cfg     *PrinterConfig
+	cancel  context.CancelFunc
+	poke    chan struct{}
+	link    LinkState
+	passive bool
 }
 
 type LinkState string
@@ -141,10 +144,11 @@ func (h *statusHub) subscribe() func() {
 	}
 	h.mu.Unlock()
 	h.reconcile()
-	return func() {
+	return sync.OnceFunc(func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		if h.subs--; h.subs == 0 {
+		h.subs--
+		if h.subs == 0 {
 			h.idle = time.AfterFunc(monitorLinger, func() {
 				h.mu.Lock()
 				h.idle = nil
@@ -152,7 +156,29 @@ func (h *statusHub) subscribe() func() {
 				h.reconcile()
 			})
 		}
+	})
+}
+
+func (h *statusHub) observeReadOnly(id string) {
+	h.mu.Lock()
+	if h.passive == nil {
+		h.passive = map[string]*time.Timer{}
 	}
+	if timer := h.passive[id]; timer != nil {
+		timer.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(monitorLinger, func() {
+		h.mu.Lock()
+		if h.passive[id] == timer {
+			delete(h.passive, id)
+		}
+		h.mu.Unlock()
+		h.reconcile()
+	})
+	h.passive[id] = timer
+	h.mu.Unlock()
+	h.reconcile()
 }
 
 func (h *statusHub) reconcile() {
@@ -170,15 +196,13 @@ func (h *statusHub) reconcile() {
 		}
 	}
 	want := map[string]*PrinterConfig{}
-	if watching {
-		for _, p := range conns {
-			if p.Printer != "" && p.Kind != "bambu-connect" {
-				want[p.Printer] = p
-			}
+	for _, p := range conns {
+		if p.Printer != "" && p.Kind != "bambu-connect" && (watching || h.passive[""] != nil || h.passive[p.Printer] != nil) {
+			want[p.Printer] = p
 		}
 	}
 	for key, mon := range h.monitors {
-		if want[key] != mon.cfg {
+		if want[key] != mon.cfg || mon.passive == watching {
 			h.linkTo(mon, LinkStopped)
 			mon.cancel()
 			delete(h.monitors, key)
@@ -188,7 +212,7 @@ func (h *statusHub) reconcile() {
 	for key, p := range want {
 		if h.monitors[key] == nil {
 			ctx, cancel := context.WithCancel(context.Background())
-			mon := &monitor{cfg: p, cancel: cancel, poke: make(chan struct{}, 1), link: LinkConnecting}
+			mon := &monitor{cfg: p, cancel: cancel, poke: make(chan struct{}, 1), link: LinkConnecting, passive: !watching}
 			h.monitors[key] = mon
 			h.status[key] = PrinterStatus{Printer: key, Link: LinkConnecting, State: "connecting", At: time.Now().UTC(), LastSeen: h.lastSeen[key]}
 			go h.run(ctx, mon)
@@ -259,7 +283,7 @@ func (h *statusHub) run(ctx context.Context, mon *monitor) {
 			publish := func(st PrinterStatus) { h.set(mon, st) }
 			switch p.Kind {
 			case "bambu-lan":
-				err = monitorBambu(ctx, p, secret, publish, func(r bambuHeard) { h.heard(mon, r) })
+				err = monitorBambu(ctx, p, secret, publish, func(r bambuHeard) { h.heard(mon, r) }, mon.passive)
 			case "flashforge":
 				err = pollFlashforge(ctx, p, publish, mon.poke)
 			default:

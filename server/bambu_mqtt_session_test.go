@@ -171,7 +171,7 @@ func startFakeBambuMonitor(ctx context.Context, conn net.Conn, publish func(Prin
 	go func() {
 		r, err := mqttHandshake(conn, "synthetic", "synthetic-secret")
 		if err == nil {
-			err = monitorBambuConn(ctx, conn, r, &PrinterConfig{Name: "Test printer", Serial: "synthetic"}, logger, publish, nil)
+			err = monitorBambuConn(ctx, conn, r, &PrinterConfig{Name: "Test printer", Serial: "synthetic"}, logger, publish, nil, false)
 		}
 		conn.Close()
 		ended <- err

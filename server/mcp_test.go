@@ -816,7 +816,7 @@ func TestMCPEndpointAccess(t *testing.T) {
 			for _, tool := range tools.Tools {
 				registered[tool.Name] = tool.Annotations
 			}
-			for name, readOnly := range map[string]bool{"list_printers": true, "slice_plate": false, "prepare_print": false, "confirm_print": false} {
+			for name, readOnly := range map[string]bool{"get_printer_status": true, "list_printers": true, "slice_plate": false, "prepare_print": false, "confirm_print": false} {
 				if annotations := registered[name]; annotations == nil || annotations.ReadOnlyHint != readOnly {
 					t.Errorf("tool %q missing or has wrong read-only annotation: %+v", name, annotations)
 				}

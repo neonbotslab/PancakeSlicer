@@ -39,7 +39,7 @@ func TestBambuReportFieldNamesAndNumericIdentity(t *testing.T) {
 				t.Fatal("could not decode initial state")
 			}
 			report := decodeBambuReport(state, []byte(tc.delta))
-			if report == nil || report.State != tc.state || report.Device == nil || report.Device.Extruder == nil || len(report.Device.Extruder.Info) != 1 || report.Device.Extruder.Info[0].Temp != tc.temp {
+			if report == nil || report.State != tc.state || report.Device == nil || report.Device.Extruder == nil || len(report.Device.Extruder.Info) != 1 || report.Device.Extruder.Info[0].Temp == nil || *report.Device.Extruder.Info[0].Temp != tc.temp {
 				t.Fatalf("field normalization lost or duplicated state: %+v", report)
 			}
 			if tc.name == "malformed unicode field" && (report.Percent == nil || *report.Percent != 42) {

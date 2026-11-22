@@ -28,7 +28,7 @@ type bambuDevice struct {
 	Extruder *struct {
 		Info []struct {
 			ID   int     `json:"id"`
-			Temp uint32  `json:"temp"`
+			Temp *uint32 `json:"temp"`
 			Snow *uint32 `json:"snow"`
 		} `json:"info"`
 	} `json:"extruder"`

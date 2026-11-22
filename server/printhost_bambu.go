@@ -923,9 +923,11 @@ type bambuReport struct {
 		UnitExistBits *string         `json:"ams_exist_bits"`
 		TrayExistBits *string         `json:"tray_exist_bits"`
 		AMS           []struct {
-			ID   string `json:"id"`
-			Info string `json:"info"`
-			Tray []struct {
+			ID          string          `json:"id"`
+			Info        string          `json:"info"`
+			Humidity    json.RawMessage `json:"humidity"`
+			HumidityRaw json.RawMessage `json:"humidity_raw"`
+			Tray        []struct {
 				Remaining *int   `json:"remain"`
 				ID        string `json:"id"`
 				Type      string `json:"tray_type"`
@@ -992,8 +994,31 @@ func (b *bambuReport) trays() []AMSTray {
 	return trays
 }
 
+func (b *bambuReport) amsUnits() []AMSUnitStatus {
+	if b.AMS == nil {
+		return nil
+	}
+	out := []AMSUnitStatus{}
+	mask := bambuExistenceMask(b.AMS.UnitExistBits)
+	for _, unit := range b.AMS.AMS {
+		layout, ok := bambuAMSUnitLayout(unit.ID, unit.Info)
+		if !ok || absentBambuSlot(mask, layout.unitBit) {
+			continue
+		}
+		row := AMSUnitStatus{ID: layout.unit, Kind: layout.kind, Extruder: layout.extruder}
+		if v := bambuNumber(unit.HumidityRaw); v != nil && *v >= 0 && *v <= 100 {
+			row.HumidityPercent = v
+		}
+		if v := bambuNumber(unit.Humidity); v != nil && *v >= 1 && *v <= 5 && *v == float64(int(*v)) {
+			row.HumidityLevel = ptr(int(*v))
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 func (b *bambuReport) status() PrinterStatus {
-	st := PrinterStatus{Online: true, Detail: b.State, File: b.Subtask, Layer: b.Layer, Layers: b.Layers, Trays: b.trays(), Nozzles: b.nozzles(), Fans: b.fans()}
+	st := PrinterStatus{Online: true, Detail: b.State, File: b.Subtask, Layer: b.Layer, Layers: b.Layers, Trays: b.trays(), Nozzles: b.nozzles(), Fans: b.fans(), AMSUnits: b.amsUnits()}
 	if b.Fun2 != nil {
 		st.InternalStorage = bambuInternalStorageFlag(*b.Fun2)
 	} else if b.Fun != nil || b.Command == "push_status" && b.Msg != nil && *b.Msg == 0 {
@@ -1002,7 +1027,9 @@ func (b *bambuReport) status() PrinterStatus {
 	st.Controls = b.controls()
 	if b.Device != nil && b.Device.Extruder != nil {
 		for _, extruder := range b.Device.Extruder.Info {
-			st.NozzleTemps = append(st.NozzleTemps, NozzleTemp{ID: extruder.ID, Actual: float64(extruder.Temp & 65535), Target: float64(extruder.Temp >> 16)})
+			if extruder.Temp != nil {
+				st.NozzleTemps = append(st.NozzleTemps, NozzleTemp{ID: extruder.ID, Actual: float64(*extruder.Temp & 65535), Target: float64(*extruder.Temp >> 16)})
+			}
 		}
 	}
 	st.SpeedMode = b.SpeedMode

@@ -87,6 +87,7 @@ type mcpSliceInput struct {
 }
 
 func (m *mcpService) addDataTools(protocol *mcp.Server) {
+	mcpTool(protocol, "get_printer_status", "Read versioned printer telemetry with report age and staleness. Subscribes passively and never publishes printer commands.", true, m.getPrinterStatus)
 	mcpTool(protocol, "list_projects", "List active saved projects and their revisions.", true, m.listProjects)
 	mcpTool(protocol, "get_project", "Get a saved project's document, revision, active plate and source asset keys. Geometry edits require the prepared plate data described by slice_plate.", true, m.getProject)
 	mcpTool(protocol, "list_plates", "List a saved project's plates and object counts.", true, m.listPlates)

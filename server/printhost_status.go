@@ -18,7 +18,16 @@ type PrinterMessage struct {
 	Message string `json:"message,omitempty"`
 }
 
+type AMSUnitStatus struct {
+	ID              int      `json:"id"`
+	Kind            string   `json:"kind"`
+	Extruder        *int     `json:"extruder"`
+	HumidityPercent *float64 `json:"humidity_percent"`
+	HumidityLevel   *int     `json:"humidity_level"`
+}
+
 type PrinterStatus struct {
+	AMSUnits        []AMSUnitStatus    `json:"ams_units,omitempty"`
 	InternalStorage *bool              `json:"internal_storage,omitempty"`
 	NozzleTemps     []NozzleTemp       `json:"nozzle_temps,omitempty"`
 	Job             *deviceJob         `json:"job,omitempty"`

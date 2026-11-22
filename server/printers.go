@@ -380,7 +380,7 @@ const deviceBurst, deviceRate = 20, 2
 func NewSendManager(store *printerStore) *SendManager {
 	m := &SendManager{store: store, busy: map[string]bool{}, live: map[string]*Job{}, cards: map[string]string{}, buckets: map[string]tokenBucket{}}
 	m.hub = newStatusHub(m)
-	m.cameras = &cameraHub{feeds: make(map[string]*cameraFeed), idleGrace: cameraIdleGrace, run: runCamera}
+	m.cameras = &cameraHub{feeds: make(map[string]*cameraFeed), idleGrace: cameraIdleGrace, run: runCamera, decodeJPEG: decodeCameraJPEG}
 	if store != nil {
 		m.conns = store.printers
 		for _, p := range m.conns {

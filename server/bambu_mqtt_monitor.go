@@ -40,7 +40,7 @@ func bambuSessionReason(err error) string {
 	return "connection_error"
 }
 
-func monitorBambu(ctx context.Context, p *PrinterConfig, secret string, publish func(PrinterStatus), heard func(bambuHeard)) (err error) {
+func monitorBambu(ctx context.Context, p *PrinterConfig, secret string, publish func(PrinterStatus), heard func(bambuHeard), passive bool) (err error) {
 	began := time.Now()
 	bambuSessionLog.Info("bambu_mqtt_session_start", "printer", p.Name)
 	defer func() {
@@ -54,7 +54,7 @@ func monitorBambu(ctx context.Context, p *PrinterConfig, secret string, publish 
 	if err != nil {
 		return err
 	}
-	return monitorBambuConn(ctx, conn, r, p, bambuSessionLog, publish, heard)
+	return monitorBambuConn(ctx, conn, r, p, bambuSessionLog, publish, heard, passive)
 }
 
 type mqttReadResult struct {
@@ -62,7 +62,7 @@ type mqttReadResult struct {
 	err    error
 }
 
-func monitorBambuConn(ctx context.Context, conn net.Conn, r *bufio.Reader, p *PrinterConfig, logger *slog.Logger, publish func(PrinterStatus), heard func(bambuHeard)) error {
+func monitorBambuConn(ctx context.Context, conn net.Conn, r *bufio.Reader, p *PrinterConfig, logger *slog.Logger, publish func(PrinterStatus), heard func(bambuHeard), passive bool) error {
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		conn.Close()
 		if ctx.Err() != nil {
@@ -107,13 +107,20 @@ func monitorBambuConn(ctx context.Context, conn net.Conn, r *bufio.Reader, p *Pr
 		return nil
 	}
 	pushAll := func() error { return requestBambuStatus(conn, p) }
-	if err := write(pushAll); err != nil {
-		return err
+	lastWrite = time.Now()
+	var statusRetryAt, statusDeadline time.Time
+	if !passive {
+		if err := write(pushAll); err != nil {
+			return err
+		}
+		statusRetryAt = lastWrite.Add(bambuStatusRetry)
+		statusDeadline = lastWrite.Add(bambuStatusTimeout)
 	}
-	statusRetryAt := lastWrite.Add(bambuStatusRetry)
-	statusDeadline := lastWrite.Add(bambuStatusTimeout)
 	var pingDeadline time.Time
-	timerAt := statusRetryAt
+	timerAt := lastWrite.Add(bambuMQTTPingInterval)
+	if !statusRetryAt.IsZero() {
+		timerAt = statusRetryAt
+	}
 	timer := time.NewTimer(time.Until(timerAt))
 	defer timer.Stop()
 
@@ -202,9 +209,11 @@ func monitorBambuConn(ctx context.Context, conn net.Conn, r *bufio.Reader, p *Pr
 				if report.State != "" {
 					statusRetryAt, statusDeadline = time.Time{}, time.Time{}
 					status := report.status()
-					publish(status)
+					if event.telemetry {
+						publish(status)
+					}
 					event.status = &status
-				} else if statusDeadline.IsZero() {
+				} else if !passive && statusDeadline.IsZero() {
 					now := time.Now()
 					statusRetryAt = now.Add(bambuStatusRetry)
 					statusDeadline = now.Add(bambuStatusTimeout)

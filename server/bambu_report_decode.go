@@ -90,6 +90,11 @@ func decodeBambuReportUpdate(state map[string]any, payload []byte) (*bambuReport
 	clear(state)
 	maps.Copy(state, candidate)
 	heard := bambuHeard{full: delta["msg"] == json.Number("0")}
+	for key := range delta {
+		if key != "command" && key != "msg" {
+			heard.telemetry = true
+		}
+	}
 	if ams, ok := delta["ams"].(map[string]any); ok {
 		_, heard.trays = ams["ams"].([]any)
 	}

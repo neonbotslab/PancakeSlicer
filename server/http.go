@@ -120,6 +120,16 @@ func NewServer(c Config, jobs *JobManager, catalog *resolve.Catalog) http.Handle
 	mux.HandleFunc("GET /api/jobs/{id}/send", s.getSend)
 	mux.HandleFunc("GET /api/jobs/{id}/send/plan", s.getSendPlan)
 	mux.HandleFunc("POST /api/jobs/{id}/send/cancel", s.cancelSend)
+	mux.HandleFunc("GET /api/printers/{printer}/cameras", s.apiPrinterCameras)
+	mux.HandleFunc("GET /api/printers/{printer}/camera/{image}", func(w http.ResponseWriter, r *http.Request) {
+		if image := r.PathValue("image"); image != "stream.mjpeg" && image != "snapshot.jpg" {
+			fail(w, 404, "unknown_api_endpoint")
+			return
+		}
+		s.apiPrinterCamera(w, r)
+	})
+	mux.HandleFunc("GET /api/printers/status", s.printerStatuses)
+	mux.HandleFunc("GET /api/printers/{printer}/status", s.printerStatuses)
 	mux.HandleFunc("GET /api/printer-connections", s.listConnections)
 	mux.HandleFunc("GET /api/events", s.liveEvents)
 	mux.HandleFunc("GET /api/printer-connections/{printer}/camera", s.printerCameras)

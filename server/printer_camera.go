@@ -37,22 +37,35 @@ const cameraIdleGrace = 3 * time.Second
 var errCameraConfigChanged = errors.New("printer connection changed")
 
 type cameraFeed struct {
-	camera   cameraSource
-	cancel   context.CancelFunc
-	viewers  map[chan []byte]struct{}
-	init     []byte
-	idle     *time.Timer
-	stopping bool
-	changed  chan struct{}
+	camera         cameraSource
+	ctx            context.Context
+	jpegViewers    map[chan []byte]struct{}
+	jpeg           []byte
+	jpegAt         time.Time
+	fragment       []byte
+	decoder        *cameraJPEGDecoder
+	decoderRetry   time.Time
+	decoderBackoff time.Duration
+	cancel         context.CancelFunc
+	viewers        map[chan []byte]struct{}
+	init           []byte
+	idle           *time.Timer
+	stopping       bool
+	changed        chan struct{}
 }
 type cameraHub struct {
-	mu        sync.Mutex
-	feeds     map[string]*cameraFeed
-	idleGrace time.Duration
-	run       func(context.Context, *PrinterConfig, cameraSource, func([]byte, bool)) error
+	mu         sync.Mutex
+	feeds      map[string]*cameraFeed
+	idleGrace  time.Duration
+	run        func(context.Context, *PrinterConfig, cameraSource, func([]byte, bool)) error
+	decodeJPEG func(context.Context, <-chan []byte, func([]byte)) error
 }
 
 func (m *SendManager) subscribeCamera(ctx context.Context, p *PrinterConfig, camera cameraSource) (<-chan []byte, func(), error) {
+	return m.subscribeCameraOutput(ctx, p, camera, false)
+}
+
+func (m *SendManager) subscribeCameraOutput(ctx context.Context, p *PrinterConfig, camera cameraSource, jpeg bool) (<-chan []byte, func(), error) {
 	for {
 		m.mu.Lock()
 		if err := ctx.Err(); err != nil {
@@ -63,7 +76,7 @@ func (m *SendManager) subscribeCamera(ctx context.Context, p *PrinterConfig, cam
 			m.mu.Unlock()
 			return nil, nil, errCameraConfigChanged
 		}
-		frames, leave, changed := m.cameras.subscribe(p, camera)
+		frames, leave, changed := m.cameras.subscribe(p, camera, jpeg)
 		m.mu.Unlock()
 		if changed == nil {
 			return frames, leave, nil
@@ -76,68 +89,132 @@ func (m *SendManager) subscribeCamera(ctx context.Context, p *PrinterConfig, cam
 	}
 }
 
-func (h *cameraHub) subscribe(p *PrinterConfig, camera cameraSource) (<-chan []byte, func(), <-chan struct{}) {
+func (h *cameraHub) subscribe(p *PrinterConfig, camera cameraSource, jpeg bool) (<-chan []byte, func(), <-chan struct{}) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	feed := h.feeds[p.Printer]
 	if feed != nil && (feed.stopping || !feed.matches(camera)) {
-		if len(feed.viewers) == 0 {
+		if len(feed.viewers)+len(feed.jpegViewers) == 0 {
 			feed.stop()
 		}
 		return nil, nil, feed.changed
 	}
 	if feed == nil {
 		ctx, cancel := context.WithCancel(context.Background())
-		feed = &cameraFeed{camera: camera, cancel: cancel, viewers: make(map[chan []byte]struct{}), changed: make(chan struct{})}
+		feed = &cameraFeed{camera: camera, ctx: ctx, jpegViewers: make(map[chan []byte]struct{}), cancel: cancel, viewers: make(map[chan []byte]struct{}), changed: make(chan struct{})}
 		h.feeds[p.Printer] = feed
 		go h.stream(ctx, p, feed)
 	}
+	if jpeg && len(feed.jpegViewers) >= 64 {
+		return nil, nil, feed.changed
+	}
 	feed.stopIdle()
-	frames := make(chan []byte, 8)
-	feed.viewers[frames] = struct{}{}
-	if len(feed.init) > 0 {
+	capacity := 8
+	viewers := feed.viewers
+	if jpeg {
+		capacity, viewers = 1, feed.jpegViewers
+	}
+	frames := make(chan []byte, capacity)
+	viewers[frames] = struct{}{}
+	if jpeg {
+		if len(feed.jpeg) > 0 && time.Since(feed.jpegAt) < cameraSnapshotMaxAge {
+			frames <- feed.jpeg
+		}
+		h.startJPEGDecoder(feed)
+	} else if len(feed.init) > 0 {
 		frames <- feed.init
 	}
 	return frames, func() {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		if _, ok := feed.viewers[frames]; ok {
-			delete(feed.viewers, frames)
+		if _, ok := viewers[frames]; ok {
+			delete(viewers, frames)
 			close(frames)
+			close(feed.changed)
+			feed.changed = make(chan struct{})
+			if len(feed.jpegViewers) == 0 {
+				feed.stopJPEGDecoder()
+			}
 			h.scheduleIdle(feed)
 		}
 	}, nil
 }
 
 func (h *cameraHub) stream(ctx context.Context, p *PrinterConfig, feed *cameraFeed) {
-	h.run(ctx, p, feed.camera, func(data []byte, init bool) {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		if feed.stopping {
-			return
-		}
-		if init {
-			feed.init = data
-		}
-		for out := range feed.viewers {
-			select {
-			case out <- data:
-			default:
-				delete(feed.viewers, out)
-				close(out)
+	backoff := 250 * time.Millisecond
+	for ctx.Err() == nil {
+		received := false
+		h.run(ctx, p, feed.camera, func(data []byte, init bool) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			if feed.stopping || len(data) > cameraChunkLimit {
+				return
 			}
+			received = true
+			if init {
+				feed.init = data
+			} else if feed.camera.Format == "mp4" {
+				feed.fragment = data
+			}
+			if feed.camera.Format == "mjpeg" {
+				h.publishJPEG(feed, data)
+			} else if feed.decoder == nil {
+				h.startJPEGDecoder(feed)
+			} else if !feed.decoder.stopping {
+				select {
+				case feed.decoder.input <- data:
+				default:
+					feed.stopJPEGDecoder()
+				}
+			}
+			for out := range feed.viewers {
+				select {
+				case out <- data:
+				default:
+					delete(feed.viewers, out)
+					close(out)
+				}
+			}
+			h.scheduleIdle(feed)
+		})
+		h.mu.Lock()
+		feed.stopJPEGDecoder()
+		feed.init, feed.fragment, feed.jpeg = nil, nil, nil
+		for out := range feed.viewers {
+			delete(feed.viewers, out)
+			close(out)
 		}
 		h.scheduleIdle(feed)
-	})
+		h.mu.Unlock()
+		if received {
+			backoff = 250 * time.Millisecond
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+		backoff = min(2*backoff, 30*time.Second)
+	}
+	h.mu.Lock()
+	feed.stop()
+	var decoded <-chan struct{}
+	if feed.decoder != nil {
+		decoded = feed.decoder.done
+	}
+	h.mu.Unlock()
+	if decoded != nil {
+		<-decoded
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	feed.stop()
 	delete(h.feeds, p.Printer)
 	close(feed.changed)
 }
 
 func (h *cameraHub) scheduleIdle(feed *cameraFeed) {
-	if len(feed.viewers) != 0 || feed.idle != nil {
+	if len(feed.viewers)+len(feed.jpegViewers) != 0 || feed.idle != nil || feed.stopping {
 		return
 	}
 	close(feed.changed)
@@ -171,6 +248,12 @@ func (f *cameraFeed) stop() {
 	f.stopping = true
 	f.stopIdle()
 	f.cancel()
+	f.stopJPEGDecoder()
+	f.init, f.fragment, f.jpeg = nil, nil, nil
+	for out := range f.jpegViewers {
+		delete(f.jpegViewers, out)
+		close(out)
+	}
 	for out := range f.viewers {
 		delete(f.viewers, out)
 		close(out)
@@ -621,6 +704,9 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 		}
 		switch kind {
 		case "ftyp", "moov":
+			if len(init)+len(box) > cameraChunkLimit {
+				return errors.New("camera initialization too large")
+			}
 			init = append(init, box...)
 			if kind == "moov" {
 				emit(init, true)
@@ -629,6 +715,9 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 			fragment = box
 		case "mdat":
 			if len(fragment) > 0 {
+				if len(fragment)+len(box) > cameraChunkLimit {
+					return errors.New("camera fragment too large")
+				}
 				fragment = append(fragment, box...)
 				emit(fragment, false)
 				fragment = nil
