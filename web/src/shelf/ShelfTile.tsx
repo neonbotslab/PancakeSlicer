@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEventHandler, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { Glyph } from '../components/Glyph';
 import { clearUpload, type UploadTile } from './shelf';
-import { displayName, entryPath, MODEL_EXTENSION, type ShelfEntry, type ShelfModel } from './tree';
+import { displayName, entryPath, type ShelfEntry, type ShelfModel } from './tree';
 
 export function FolderMark() {
   return <svg className="shelf-mark" viewBox="0 0 120 120" aria-hidden="true">
@@ -39,7 +39,7 @@ type TileProps = {
   selected: boolean;
   menuOpen: boolean;
   editing: boolean;
-  added: boolean;
+  added: number | null;
   dropTarget: boolean;
   editor: ReactNode;
   onSelect(): void;
@@ -65,7 +65,7 @@ export function ShelfTile({
     event.stopPropagation();
     onOpenMenu(trigger.current);
   };
-  return <article data-shelf-id={entry.id} className={`shelf-tile${selected ? ' shelf-selected' : ''}${menuOpen ? ' shelf-menu-open' : ''}${added ? ' shelf-added' : ''}${dropTarget ? ' shelf-drop-target' : ''}${editing ? ' shelf-tile-editing' : ''}`}
+  return <article data-shelf-id={entry.id} className={`shelf-tile${selected ? ' shelf-selected' : ''}${menuOpen ? ' shelf-menu-open' : ''}${added !== null ? ' shelf-added' : ''}${dropTarget ? ' shelf-drop-target' : ''}${editing ? ' shelf-tile-editing' : ''}`}
     draggable={!editing} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
     onContextMenu={openMenu}
     onKeyDown={(event) => {
@@ -83,7 +83,7 @@ export function ShelfTile({
       aria-label={name} aria-pressed={entry.kind === 'model' ? selected : undefined}>
       <span className="shelf-thumb">
         {entry.kind === 'folder' ? <FolderMark /> : <ModelPreview model={entry} />}
-        {added && <span className="shelf-check" aria-label="Added to plate">✓</span>}
+        {added !== null && <span key={added} className="shelf-added-outline" aria-hidden="true" />}
       </span>
       {!editing && <span className="shelf-caption" title={name}>{name}</span>}
       {!editing && meta && <span className="shelf-meta" title={meta}>{meta}</span>}
@@ -97,20 +97,23 @@ export const isZip = (file: File) => /\.zip$/i.test(file.name);
 
 export function ShelfUpload({ tile }: { tile: UploadTile }) {
   const zip = isZip(tile.file);
-  const name = zip ? tile.file.name : tile.file.name.replace(MODEL_EXTENSION, '') || tile.file.name;
+  const { name } = tile.file;
   const { state } = tile;
   return <article data-upload-id={tile.key} className="shelf-tile shelf-upload">
     <div className="shelf-thumb">
-      {state.kind === 'uploading' && <>
-        {zip && <ZipMark />}
-        <div className={`shelf-progress${zip ? ' shelf-progress-archive' : ''}`}>
-          <progress max={1} value={state.progress ?? undefined} aria-label={`Uploading ${tile.file.name}`} />
+      {zip && state.kind !== 'failed' && <ZipMark />}
+      {state.kind === 'uploading' && <div className={`shelf-progress${zip ? ' shelf-progress-archive' : ''}`}>
+        <div className="shelf-progress-track" role="progressbar" aria-label={`Uploading ${name}`}
+          aria-valuemin={0} aria-valuemax={1} aria-valuenow={state.progress ?? undefined}>
+          <div className="shelf-progress-fill" style={{ width: state.progress === null ? undefined : `${state.progress * 100}%` }} />
         </div>
-      </>}
-      {state.kind === 'preview' && <div className="shelf-tile-status" role="status"><span className="shelf-shimmer" />Making preview</div>}
+      </div>}
+      {state.kind === 'preview' && <div className={`shelf-tile-status${zip ? ' shelf-tile-status-archive' : ''}`} role="status">
+        <span className="shelf-shimmer" />Making preview
+      </div>}
       {state.kind === 'failed' && <div className="shelf-tile-status" title={state.detail}>
         <span>Couldn’t read this file</span>
-        <button type="button" className="shelf-link" onClick={() => clearUpload(tile.key)} aria-label={`Remove ${tile.file.name}`}>Remove</button>
+        <button type="button" className="shelf-link" onClick={() => clearUpload(tile.key)} aria-label={`Remove ${name}`}>Remove</button>
       </div>}
     </div>
     <div className="shelf-caption" title={name}>{name}</div>

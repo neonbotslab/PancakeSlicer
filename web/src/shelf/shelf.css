@@ -20,12 +20,16 @@
   border-bottom: 1px solid var(--line);
 }
 
+.shelf-breadcrumbs,
+.shelf-header-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
 .shelf-breadcrumbs {
   display: flex;
-  flex: 1;
   align-items: center;
   flex-wrap: wrap;
-  min-width: 0;
 }
 
 .shelf-crumb {
@@ -322,35 +326,19 @@
   background: color-mix(in srgb, var(--accent) 14%, var(--shelf-thumb-bg));
 }
 
-.shelf-added .shelf-thumb::after {
+.shelf-added-outline {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--success) 22%, transparent);
-  content: '';
+  border: 4px solid var(--accent);
+  border-radius: inherit;
+  opacity: 0;
   pointer-events: none;
+  animation: shelf-added-fade 400ms ease-out;
 }
 
-.shelf-added:has(.shelf-tile-main) {
-  animation: shelf-press var(--dur-3) var(--ease);
-}
-
-@keyframes shelf-press {
-  40% { scale: .98; }
-}
-
-.shelf-check {
-  position: absolute;
-  z-index: 1;
-  top: 6px;
-  left: 6px;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--r-1);
-  background: var(--shelf-thumb-bg);
-  color: var(--success);
-  font-weight: 600;
+@keyframes shelf-added-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 .shelf-name-form {
@@ -406,36 +394,36 @@
   padding: 0;
 }
 
-.shelf-progress progress {
-  display: block;
+.shelf-progress-track {
   width: 70%;
   height: 3px;
-  appearance: none;
-  border: 0;
+  overflow: hidden;
   border-radius: 1px;
   background: var(--overlay);
-  color: var(--accent);
 }
 
-.shelf-progress-archive progress {
+.shelf-progress-archive .shelf-progress-track {
   width: 100%;
 }
 
-.shelf-progress progress::-webkit-progress-bar {
-  border-radius: 1px;
-  background: var(--overlay);
-}
-
-.shelf-progress progress::-webkit-progress-value {
+.shelf-progress-fill {
+  height: 100%;
   background: var(--accent);
 }
 
-.shelf-progress progress::-moz-progress-bar {
-  background: var(--accent);
+.shelf-progress-track:not([aria-valuenow]) .shelf-progress-fill {
+  width: 40%;
+  animation: shelf-progress-slide 800ms ease-in-out infinite alternate;
 }
 
-.shelf-progress progress:indeterminate {
-  background: color-mix(in srgb, var(--accent) 35%, var(--overlay));
+@keyframes shelf-progress-slide {
+  from { transform: translateX(0); }
+  to { transform: translateX(150%); }
+}
+
+.shelf-tile-status-archive {
+  justify-content: flex-end;
+  padding-bottom: var(--s-2);
 }
 
 .shelf-shimmer {
@@ -652,8 +640,13 @@
     flex-wrap: wrap;
   }
 
-  .shelf-breadcrumbs {
+  .shelf-breadcrumbs,
+  .shelf-header-spacer {
     flex-basis: 100%;
+  }
+
+  .shelf-header-spacer {
+    min-height: calc(1lh + 2 * var(--s-1));
   }
 
   .shelf-search {
@@ -670,7 +663,8 @@
     background: var(--surface);
   }
 
-  .shelf-tile.shelf-added,
+  .shelf-added-outline,
+  .shelf-progress-track:not([aria-valuenow]) .shelf-progress-fill,
   .shelf-shimmer {
     animation: none;
   }

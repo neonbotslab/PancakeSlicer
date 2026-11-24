@@ -204,8 +204,10 @@ async function checkDeleteAndDrop(page, folderId) {
       await chooseFile(page, uploadedName);
       await paused();
       await button(models(page).getByRole('navigation', { name: 'Folder path' }), 'Shelf').click();
+      const folderTile = models(page).locator('.shelf-tile').filter({ has: button(page, shelfName) });
+      assert.equal(await folderTile.locator('.shelf-meta').textContent(), '4 items');
       await command(models(page), page, `Actions for ${shelfName}`, 'Delete');
-      const dialog = page.getByRole('alertdialog', { name: `Delete ${shelfName} and its 2 models?`, exact: true });
+      const dialog = page.getByRole('alertdialog', { name: `Delete ${shelfName} and its 4 items?`, exact: true });
       await dialog.waitFor();
       await dropFile(page, dialog, droppedName);
       assert.equal(await page.getByText('Drop to add to Shelf', { exact: true }).count(), 0);

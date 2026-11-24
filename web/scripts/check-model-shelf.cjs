@@ -29,6 +29,11 @@ async function shot(page, name) {
 async function ready(page) {
   await page.goto(base);
   await page.waitForFunction(() => window.__plater && window.__plater.getState().profileLibraryLoad.state === 'ready');
+  await page.evaluate(async () => {
+    const source = performance.getEntriesByType('resource').findLast((entry) => new URL(entry.name).pathname === '/src/flow/project.ts');
+    if (!source) throw new Error('Project startup module was not loaded.');
+    await (await import(source.name)).startProjects();
+  });
   const closeSetup = page.getByRole('button', { name: 'Close setup', exact: true });
   if (await closeSetup.count()) await closeSetup.click();
   await page.getByRole('button', { name: 'Models', exact: true }).click();
@@ -95,7 +100,7 @@ async function dragFile(page, target, name, event = 'drop') {
     await page.keyboard.press('Enter');
     await newFolder(page, 'Posts');
     await newFolder(page, 'Tolerance');
-    await upload(page, [modelFile('Benchy.stl'), modelFile('Cube.stl'), modelFile('Retract.stl'), modelFile('Bridge.stl')]);
+    await upload(page, [modelFile('Benchy.stl'), modelFile('Cube.stl'), modelFile('Retract.stl'), modelFile('Bridge.stl'), modelFile('Temp tower.stl')]);
     await upload(page, modelFile('Cube.stl'));
     await models(page).getByRole('button', { name: 'Cube 2', exact: true }).waitFor();
     const beforeClick = await objectCount(page);
@@ -117,8 +122,29 @@ async function dragFile(page, target, name, event = 'drop') {
     await page.keyboard.press('Escape');
     assert.equal(await action(page, 'Cube').evaluate((element) => element === document.activeElement), true);
     await add(page, 'Benchy');
-    await shot(page, 'added-check-toast');
+    const pulse = await tile(page, 'Benchy').evaluate((element) => {
+      const style = getComputedStyle(element.querySelector('.shelf-added-outline'));
+      return { duration: style.animationDuration, animation: style.animationName, background: style.backgroundColor, opacity: Number(style.opacity) };
+    });
+    assert.equal(pulse.duration, '0.4s');
+    assert.equal(pulse.animation, 'shelf-added-fade');
+    assert.equal(pulse.background, 'rgba(0, 0, 0, 0)', 'Add feedback has no green wash.');
+    assert.ok(pulse.opacity > 0, 'Add briefly pulses an outline.');
+    assert.equal(await models(page).locator('.shelf-check').count(), 0, 'Add has no check badge.');
+    await page.screenshot({ path: png('added-outline-pulse'), animations: 'allow' });
+    await page.waitForFunction(() => !document.querySelector('.shelf-added'));
+    await shot(page, 'added-toast-after-pulse');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await add(page, 'Benchy');
+    assert.equal(await tile(page, 'Benchy').evaluate((element) => getComputedStyle(element.querySelector('.shelf-added-outline')).animationName), 'none');
+    assert.equal(await tile(page, 'Benchy').evaluate((element) => getComputedStyle(element.querySelector('.shelf-added-outline')).opacity), '0');
+    await shot(page, 'added-reduced-motion');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await add(page, 'Benchy');
+    const earlierOutline = await tile(page, 'Benchy').locator('.shelf-added-outline').elementHandle();
+    await add(page, 'Benchy');
+    assert.equal(await tile(page, 'Benchy').locator('.shelf-added-outline').evaluate((element, earlier) => element !== earlier, earlierOutline), true,
+      'Successive adds create fresh outline animations.');
     const copies = await page.evaluate(() => {
       const objects = window.__plater.getState().objects;
       const [a, b] = objects.slice(-2);
@@ -159,6 +185,7 @@ async function dragFile(page, target, name, event = 'drop') {
     const folderMove = await page.evaluateHandle(() => new DataTransfer());
     await tile(page, 'Calibration cube').dispatchEvent('dragstart', { dataTransfer: folderMove });
     await tile(page, 'Tolerance').dispatchEvent('dragover', { dataTransfer: folderMove });
+    await shot(page, 'drag-in-progress');
     await tile(page, 'Tolerance').dispatchEvent('drop', { dataTransfer: folderMove });
     await tile(page, 'Calibration cube').waitFor({ state: 'hidden' });
     await models(page).getByRole('button', { name: 'Tolerance', exact: true }).click();
@@ -202,7 +229,7 @@ async function dragFile(page, target, name, event = 'drop') {
     await models(page).getByRole('button', { name: 'parts', exact: true }).waitFor();
     await zipClient.send('Fetch.disable');
     await zipClient.detach();
-    await models(page).getByText('1 file skipped (not a model)', { exact: true }).waitFor();
+    await models(page).getByText("Skipped 1 file that isn't a model", { exact: true }).waitFor();
     await shot(page, 'zip-folder-skipped');
     const imported = await snapshot(page);
     const zipFolder = Object.values(imported.folders).find((folder) => folder.name === 'parts');
@@ -217,6 +244,14 @@ async function dragFile(page, target, name, event = 'drop') {
     client.on('Fetch.requestPaused', ({ requestId }) => responsePaused(requestId));
     const uploading = models(page).locator('input[type=file]').setInputFiles({ name: 'Hook.stl', mimeType: 'model/stl', buffer: Buffer.concat([cube, Buffer.alloc(512 * 1024, 32)]) });
     await models(page).getByRole('progressbar').waitFor();
+    await page.waitForFunction(() => {
+      const progress = document.querySelector('.shelf-progress-track');
+      const value = progress?.getAttribute('aria-valuenow');
+      return value !== null && Number(value) > 0 && Number(value) < 1;
+    });
+    await models(page).locator('.shelf-upload .shelf-caption').getByText('Hook.stl', { exact: true }).waitFor();
+    assert.equal(await models(page).locator('.shelf-progress-fill').evaluate((element) => getComputedStyle(element).backgroundColor),
+      await models(page).evaluate((element) => { const color = document.createElement('span'); color.style.color = 'var(--accent)'; element.append(color); const value = getComputedStyle(color).color; color.remove(); return value; }));
     await shot(page, 'upload-progress');
     await client.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await uploading;
@@ -225,6 +260,10 @@ async function dragFile(page, target, name, event = 'drop') {
     await client.send('Fetch.continueResponse', { requestId: await previewPaused });
     await models(page).getByRole('button', { name: 'Hook', exact: true }).waitFor();
     await client.send('Fetch.disable');
+    const skippedArchive = zipSync({ 'one.txt': strToU8('one'), 'two.txt': strToU8('two'), 'three.txt': strToU8('three') });
+    await upload(page, { name: 'three-skipped.zip', mimeType: 'application/zip', buffer: Buffer.from(skippedArchive) });
+    await models(page).getByText("Skipped 3 files that aren't models", { exact: true }).waitFor();
+    await shot(page, 'skipped-files-plural');
     await models(page).locator('input[type=file]').setInputFiles({ name: 'scan 3.stl', mimeType: 'model/stl', buffer: Buffer.from('unreadable model') });
     await models(page).getByRole('button', { name: 'Remove scan 3.stl', exact: true }).waitFor();
     await shot(page, 'upload-failed');
@@ -239,14 +278,21 @@ async function dragFile(page, target, name, event = 'drop') {
     await models(page).getByRole('button', { name: 'Try again', exact: true }).waitFor({ state: 'hidden' });
     const query = models(page).getByRole('searchbox', { name: 'Search models', exact: true });
     await query.fill('tower');
+    await models(page).getByRole('button', { name: 'Temp tower', exact: true }).waitFor();
+    assert.equal(await models(page).getByRole('button', { name: 'Retract', exact: true }).count(), 0, 'Search ignores ancestor folder names.');
+    assert.equal(await models(page).getByRole('navigation', { name: 'Folder path' }).count(), 0, 'Search hides breadcrumbs.');
     assert.ok(await models(page).getByText('Calibration / Towers', { exact: true }).count());
     await shot(page, 'search-paths');
     await query.fill('');
     await models(page).getByRole('navigation', { name: 'Folder path' }).getByRole('button', { name: 'Calibration', exact: true }).click();
     const beforeCancel = (await snapshot(page)).revision;
+    const countLabel = await tile(page, 'Towers').locator('.shelf-meta').textContent();
+    assert.equal(countLabel, '16 items', 'Folder tiles count all nested folders and models.');
     await action(page, 'Towers').click();
+    await shot(page, 'folder-menu');
     await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
     await page.getByRole('alertdialog').waitFor();
+    assert.equal(await page.getByRole('alertdialog').getAttribute('aria-label'), `Delete Towers and its ${countLabel}?`);
     await shot(page, 'folder-delete-confirm');
     await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).focus();
     await page.keyboard.press('Tab');

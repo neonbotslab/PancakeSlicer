@@ -98,10 +98,9 @@ export function descendants(tree: ShelfTree, parent: FolderId): ShelfEntry[] {
 }
 
 export function searchTree(tree: ShelfTree, query: string) {
-  return [...tree.entries.values()].flatMap((entry) => {
-    const path = folderPath(tree, entry.parent).map((folder) => folder.name).join(' / ');
-    return `${path} / ${entry.name}`.toLocaleLowerCase().includes(query) ? [{ entry, path: path || 'Shelf' }] : [];
-  });
+  return [...tree.entries.values()]
+    .filter((entry) => entry.name.toLocaleLowerCase().includes(query))
+    .map((entry) => ({ entry, path: folderPath(tree, entry.parent).map((folder) => folder.name).join(' / ') || 'Shelf' }));
 }
 
 export function canMove(tree: ShelfTree, entry: ShelfEntry, destination: Parent) {

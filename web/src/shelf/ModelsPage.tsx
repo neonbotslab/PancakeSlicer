@@ -24,6 +24,7 @@ type OpenDialog = { kind: 'move'; entry: ShelfEntry } | { kind: 'delete'; entry:
 type OpenMenu = { id: EntryId; trigger: HTMLButtonElement };
 
 const messageFrom = (error: unknown, fallback: string) => error instanceof Error && error.message ? error.message : fallback;
+const itemCount = (count: number) => `${count} ${count === 1 ? 'item' : 'items'}`;
 
 function NameEditor({ draft, update, save, cancel }: {
   draft: EditDraft; update(text: string): void; save(): void; cancel(): void;
@@ -58,7 +59,7 @@ export default function ModelsPage() {
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
-  const [added, setAdded] = useState<{ id: EntryId } | null>(null);
+  const [added, setAdded] = useState<{ id: EntryId; key: number } | null>(null);
   const [fileDrag, setFileDrag] = useState(false);
   const [dropTarget, setDropTarget] = useState<Parent | null>(null);
   const dragging = useRef<ShelfEntry | null>(null);
@@ -90,7 +91,7 @@ export default function ModelsPage() {
 
   useEffect(() => {
     if (!added) return;
-    const timer = window.setTimeout(() => setAdded(null), 950);
+    const timer = window.setTimeout(() => setAdded(null), 400);
     return () => window.clearTimeout(timer);
   }, [added]);
 
@@ -229,14 +230,12 @@ export default function ModelsPage() {
   };
   const confirmDelete = (entry: ShelfEntry) => {
     if (!tree) return;
-    const inside = tree && entry.kind === 'folder' ? descendants(tree, entry.id) : [];
-    if (!inside.length) {
+    const count = entry.kind === 'folder' ? descendants(tree, entry.id).length : 0;
+    if (!count) {
       void deleteItem(entry, false);
       return;
     }
-    const modelCount = inside.filter((item) => item.kind === 'model').length;
-    const content = modelCount ? `${modelCount} ${modelCount === 1 ? 'model' : 'models'}` : 'subfolders';
-    setDialog({ kind: 'delete', entry, question: `Delete ${entry.name} and its ${content}?`, revision: tree.revision });
+    setDialog({ kind: 'delete', entry, question: `Delete ${entry.name} and its ${itemCount(count)}?`, revision: tree.revision });
   };
   const doUndo = async (notice: Extract<Notice, { kind: 'deleted' }>) => {
     if (workingUndos.current.has(notice.key)) return;
@@ -269,8 +268,9 @@ export default function ModelsPage() {
         name = displayName(model);
         await addShelfCopy(model.id, revision, name, destination);
       });
-      setAdded({ id: entry.id });
-      const toast: Notice = { key: ++sequence.current, kind: 'added', text: `Added ${name} to plate`, expiresAt: Date.now() + BRIEF_NOTICE };
+      const key = ++sequence.current;
+      setAdded({ id: entry.id, key });
+      const toast: Notice = { key, kind: 'added', text: `Added ${name} to plate`, expiresAt: Date.now() + BRIEF_NOTICE };
       setNotices((items) => [...items.filter((item) => item.kind !== 'added'), toast]);
     } catch (error) {
       notify(messageFrom(error, 'Couldn’t add this model to the plate.'));
@@ -321,10 +321,9 @@ export default function ModelsPage() {
 
   const renderTile = ({ entry, path }: { entry: ShelfEntry; path?: string }) => {
     const editing = draft?.kind === 'rename' && draft.entry.id === entry.id;
-    const count = entry.kind === 'folder' ? tree?.children.get(entry.id)?.length ?? 0 : null;
-    const meta = path ?? (count === null ? undefined : `${count} ${count === 1 ? 'item' : 'items'}`);
+    const meta = path ?? (entry.kind === 'folder' && tree ? itemCount(descendants(tree, entry.id).length) : undefined);
     return <ShelfTile key={entry.id} entry={entry} meta={meta} editing={editing} editor={editing ? renderEditor(draft) : null}
-      selected={selected === entry.id} menuOpen={menu?.id === entry.id} added={added?.id === entry.id}
+      selected={selected === entry.id} menuOpen={menu?.id === entry.id} added={added?.id === entry.id ? added.key : null}
       dropTarget={entry.kind === 'folder' && dropTarget === entry.id}
       onSelect={() => { if (entry.kind === 'folder') navigate(entry.id); else setSelected(entry.id); }}
       onOpenMenu={(trigger) => {
@@ -343,14 +342,14 @@ export default function ModelsPage() {
 
   return <main className="models-page" aria-label="Models" ref={page}>
     <header className="shelf-header">
-      <nav className="shelf-breadcrumbs" aria-label="Folder path">
+      {search ? <div className="shelf-header-spacer" aria-hidden="true" /> : <nav className="shelf-breadcrumbs" aria-label="Folder path">
         {crumbList.map((crumb, index) => <Fragment key={crumb.id}>
           {!!index && <span className="shelf-separator" aria-hidden="true">/</span>}
           <button className={`shelf-crumb${dropTarget === crumb.id ? ' shelf-drop-target' : ''}`} type="button"
             aria-current={crumb.id === currentParent ? 'page' : undefined}
             onClick={() => navigate(crumb.id)} {...folderDrop(crumb.id)}>{crumb.name}</button>
         </Fragment>)}
-      </nav>
+      </nav>}
       <label className="shelf-search">
         <svg viewBox="0 0 14 14" width="14" height="14" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="3.5" stroke="currentColor" strokeWidth="1.2" /><path d="m11 11-2.2-2.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
         <input type="search" aria-label="Search models" placeholder="Search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} />
@@ -380,7 +379,7 @@ export default function ModelsPage() {
       {!hasTiles && tree && (search || currentParent
         ? <div className="shelf-empty shelf-empty-quiet"><p>{search ? 'No matching models or folders' : 'Nothing in this folder yet'}</p></div>
         : <div className="shelf-empty"><p>Drop models or a zip here</p><button type="button" className="shelf-button shelf-primary" onClick={chooseFiles}>Add</button></div>)}
-      {skipped > 0 && <p className="shelf-skipped">{skipped} {skipped === 1 ? 'file' : 'files'} skipped (not a model)</p>}
+      {skipped > 0 && <p className="shelf-skipped">Skipped {skipped} {skipped === 1 ? "file that isn't a model" : "files that aren't models"}</p>}
     </div>
     {fileDrag && <div className="shelf-drop-overlay"><span>Drop to add to {folderName}</span></div>}
     {menu && menuEntry && !removing.has(menuEntry.id) && <ShelfMenu trigger={menu.trigger} name={displayName(menuEntry)} close={closeMenu} actions={[
