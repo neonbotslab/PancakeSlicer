@@ -65,6 +65,7 @@ const PresetUx = preloadable(() => import('./components/PresetUx'));
 const FlushDialog = preloadable(() => import('./components/FlushDialog').then((m) => ({ default: m.FlushDialog })));
 const LibraryPage = preloadable(() => import('./profiles/LibraryPage').then((m) => ({ default: m.LibraryPage })));
 const DeviceView = preloadable(() => import('./printers/DeviceView').then((m) => ({ default: m.DeviceView })));
+const ModelsPage = preloadable(() => import('./shelf/ModelsPage'));
 const PreviewView = preloadable(() => loadPreviewView().then((viewer) => ({ default: viewer })));
 const ProjectsView = preloadable(() => import('./projects/ProjectsView'));
 export const preloadProjects = ProjectsView.preload;
@@ -137,6 +138,8 @@ export default function App() {
   const tab = useStore((s) => s.tab);
   const [libraryOpened, setLibraryOpened] = useState(false);
   useEffect(() => { if (tab === 'library') setLibraryOpened(true); }, [tab]);
+  const [modelsOpened, setModelsOpened] = useState(false);
+  useEffect(() => { if (tab === 'models') setModelsOpened(true); }, [tab]);
   const gizmo = useStore((s) => s.gizmo);
   const loading = useStore((s) => s.loading);
   const [platerLoaded, setPlaterLoaded] = useState(false);
@@ -169,6 +172,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (ownsKeys(e) || getState().dialog || getState().flushDialog || getState().appDialog || getState().calibDialog || getState().sessionDialog) return;
+      if (getState().tab === 'models') return;
       const ctrl = e.ctrlKey || e.metaKey;
       const prepare = getState().tab === 'prepare';
       if (ctrl && e.key.toLowerCase() === 'z') e.shiftKey ? redo() : undo();
@@ -270,6 +274,7 @@ export default function App() {
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const s = getState();
+      if (s.tab === 'models') return;
       if (e.target instanceof Element && e.target.closest('input,select,textarea,[contenteditable="true"],[role="dialog"],dialog')) return;
       if (s.dialog || s.flushDialog || s.appDialog || s.calibDialog || s.sessionDialog) return;
       const files = [...(e.clipboardData?.files ?? [])].filter((f) => /\.(stl|obj|3mf|step|stp)$/i.test(f.name));
@@ -288,7 +293,7 @@ export default function App() {
   useEffect(() => {
     let depth = 0;
     const isFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
-    const accepts = (e: DragEvent) => isFiles(e) && !document.querySelector('dialog[open]');
+    const accepts = (e: DragEvent) => getState().tab !== 'models' && isFiles(e) && !document.querySelector('dialog[open]');
     const enter = (e: DragEvent) => { if (isFiles(e)) { depth++; setDragOver(accepts(e)); } };
     const leave = (e: DragEvent) => { if (isFiles(e) && --depth <= 0) { depth = 0; setDragOver(false); } };
     const over = (e: DragEvent) => { if (accepts(e)) e.preventDefault(); };
@@ -314,8 +319,9 @@ export default function App() {
       {setupOpen && <Suspense fallback={null}><Setup /></Suspense>}
       {projects && <PageScope page="projects"><Suspense fallback={null}><ProjectsView /></Suspense></PageScope>}
       {tab === 'device' && <PageScope page="device"><Suspense fallback={<div role="status">Loading devices…</div>}><DeviceView /></Suspense></PageScope>}
+      {modelsOpened && <PageScope page="models"><div style={{ display: tab === 'models' ? 'contents' : 'none' }}><Suspense fallback={<div role="status">Loading models…</div>}><ModelsPage /></Suspense></div></PageScope>}
       {libraryOpened && <PageScope page="library"><Suspense fallback={null}><LibraryPage hidden={tab !== 'library' || projects} /></Suspense></PageScope>}
-      <div style={{ display: projects || tab === 'device' || tab === 'library' ? 'none' : undefined }} className={`main ${sidebarHidden ? 'sidebar-hidden' : ''} ${dragOver ? 'drag-over' : ''}`}>
+      <div style={{ display: projects || tab === 'device' || tab === 'models' || tab === 'library' ? 'none' : undefined }} className={`main ${sidebarHidden ? 'sidebar-hidden' : ''} ${dragOver ? 'drag-over' : ''}`}>
         <Suspense fallback={<SidebarSkeleton />}><WorkspaceRail><Suspense fallback={<SidebarSkeleton />}><Sidebar /></Suspense></WorkspaceRail></Suspense>
         {!sidebarHidden && <RailResizer />}
         <div className="canvas-area" data-viewport={tab}>

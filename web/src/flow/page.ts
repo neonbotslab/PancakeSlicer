@@ -15,7 +15,7 @@ export function onLeavePage(page: Page, fn: () => void): () => void {
 }
 const leave = (page: Page) => () => { for (const fn of [...leaveHooks.get(page) ?? []]) fn(); };
 
-const PAGES: Page[] = ['projects', 'prepare', 'preview', 'device', 'library'];
+const PAGES: Page[] = ['projects', 'prepare', 'preview', 'device', 'models', 'library'];
 const states = {} as Record<Page, StateNode<Page, PageEvent, PageContext>>;
 for (const p of PAGES) states[p] = {
   exit: leave(p),
