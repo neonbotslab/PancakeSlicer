@@ -60,9 +60,13 @@ type shelfImported struct {
 	Model   shelfModel `json:"model"`
 	Preview string     `json:"preview"`
 }
-type shelfImportBatch struct {
+type shelfImportGroup struct {
+	name    string
 	files   []shelfImportFile
 	folders []string
+}
+type shelfImportBatch struct {
+	groups  []shelfImportGroup
 	skipped []shelfSkipped
 	total   int64
 	entries int
@@ -76,12 +80,12 @@ func shelfArchivePath(name string, dir bool) (string, error) {
 		name = strings.TrimSuffix(name, "/")
 	}
 	pieces := strings.Split(name, "/")
-	maxSegments := 32
+	maxSegments := shelfMaxFolderDepth - 1
 	if !dir {
 		maxSegments++
 	}
 	if len(pieces) > maxSegments {
-		return "", shelfProblem(400, "zip_depth", "ZIP paths exceed 32 levels.")
+		return "", shelfProblem(400, "zip_depth", "The ZIP and its folders exceed 32 levels.")
 	}
 	for _, piece := range pieces {
 		if !shelfName(piece) {
@@ -130,6 +134,14 @@ func (b *shelfImportBatch) readFile(ctx context.Context, src io.Reader, dst stri
 	return n, nil
 }
 func (b *shelfImportBatch) expandZIP(ctx context.Context, file, name, dir string, limits shelfLimits) error {
+	if err := b.addEntry(limits); err != nil {
+		return err
+	}
+	base := strings.TrimSpace(strings.TrimSuffix(name, path.Ext(name)))
+	if !shelfName(base) {
+		base = name
+	}
+	group := shelfImportGroup{name: base}
 	f, err := os.Open(file)
 	if err != nil {
 		return err
@@ -174,9 +186,10 @@ func (b *shelfImportBatch) expandZIP(ctx context.Context, file, name, dir string
 			return shelfProblem(413, "zip_ratio_limit", "A ZIP entry exceeds the decompression ratio limit.")
 		}
 		if mode.IsDir() {
-			b.folders = append(b.folders, relative)
+			group.folders = append(group.folders, relative)
 			continue
 		}
+		group.folders = append(group.folders, path.Dir(relative))
 		ext := strings.ToLower(path.Ext(relative))
 		keep := shelfModelFormat(ext)
 		dst := ""
@@ -197,10 +210,59 @@ func (b *shelfImportBatch) expandZIP(ctx context.Context, file, name, dir string
 		}
 		source := name + "/" + relative
 		if keep {
-			b.files = append(b.files, shelfImportFile{relative: relative, source: source, file: dst, format: ext, size: n})
+			group.files = append(group.files, shelfImportFile{relative: relative, source: source, file: dst, format: ext, size: n})
 		} else {
 			b.skipped = append(b.skipped, shelfSkipped{Path: source, Reason: "unsupported model format"})
 		}
+	}
+	b.groups = append(b.groups, group)
+	return nil
+}
+
+func (b *shelfImportBatch) prepareTree(parentDepth, limit int) error {
+	entries := 0
+	for i := range b.groups {
+		group := &b.groups[i]
+		entries += len(group.files)
+		if group.name != "" {
+			entries++
+		}
+		if entries > limit {
+			return shelfProblem(413, "upload_tree_limit", "The expanded folder and model tree exceeds its entry limit.")
+		}
+		if group.name == "" {
+			continue
+		}
+		if parentDepth >= shelfMaxFolderDepth {
+			return shelfProblem(400, "folder_depth", "Import would exceed 32 folder levels.")
+		}
+		seen := map[string]bool{".": true}
+		var folders []string
+		var collect func(string) error
+		collect = func(folder string) error {
+			if seen[folder] {
+				return nil
+			}
+			if parentDepth+2+strings.Count(folder, "/") > shelfMaxFolderDepth {
+				return shelfProblem(400, "folder_depth", "Import would exceed 32 folder levels.")
+			}
+			if err := collect(path.Dir(folder)); err != nil {
+				return err
+			}
+			entries++
+			if entries > limit {
+				return shelfProblem(413, "upload_tree_limit", "The expanded folder and model tree exceeds its entry limit.")
+			}
+			seen[folder] = true
+			folders = append(folders, folder)
+			return nil
+		}
+		for _, folder := range group.folders {
+			if err := collect(folder); err != nil {
+				return err
+			}
+		}
+		group.folders = folders
 	}
 	return nil
 }
@@ -325,54 +387,22 @@ func (s *Server) uploadShelf(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			batch.files = append(batch.files, part.file)
+			batch.groups = append(batch.groups, shelfImportGroup{files: []shelfImportFile{part.file}})
 		}
 	}
-	paths := append([]string{}, batch.folders...)
-	for _, file := range batch.files {
-		paths = append(paths, path.Dir(file.relative))
+	if err = batch.prepareTree(current.depth(parent), limits.Entries); err != nil {
+		shelfFail(w, err)
+		return
 	}
-	implicit := map[string]bool{}
-	for _, folder := range paths {
-		for folder != "." && folder != "" {
-			implicit[folder] = true
-			if len(implicit)+len(batch.files) > limits.Entries {
-				shelfFail(w, shelfProblem(413, "upload_tree_limit", "The expanded folder and model tree exceeds its entry limit."))
+	for _, group := range batch.groups {
+		for i := range group.files {
+			if err := s.prepareShelfModel(r.Context(), &group.files[i]); err != nil {
+				shelfFail(w, err)
 				return
 			}
-			folder = path.Dir(folder)
 		}
 	}
-	for i := range batch.files {
-		f := &batch.files[i]
-		sum, err := mcpFileHash(f.file)
-		if err != nil {
-			shelfFail(w, err)
-			return
-		}
-		f.sum = sum
-		triangles, parseErr := readShelfMesh(r.Context(), s.cfg, f.file, f.format)
-		if parseErr != nil {
-			if f.format != ".step" && f.format != ".stp" {
-				shelfFail(w, shelfProblem(400, "model_invalid", "A model contains invalid or unsupported geometry."))
-				return
-			}
-			f.thumbnail, err = shelfPlaceholderThumbnail()
-			f.preview = "placeholder"
-		} else {
-			f.thumbnail, err = renderShelfThumbnail(triangles)
-			f.preview = "rendered"
-			if err != nil {
-				f.thumbnail, err = shelfPlaceholderThumbnail()
-				f.preview = "placeholder"
-			}
-		}
-		if err != nil {
-			shelfFail(w, err)
-			return
-		}
-	}
-	imported := make([]shelfImported, 0, len(batch.files))
+	imported := []shelfImported{}
 	created := []shelfFolder{}
 	d, err := s.changeShelf(expected, func(d *shelfDocument) error {
 		if err := r.Context().Err(); err != nil {
@@ -382,58 +412,33 @@ func (s *Server) uploadShelf(w http.ResponseWriter, r *http.Request) {
 			return shelfProblem(404, "folder_missing", "Shelf folder not found.")
 		}
 		names := newShelfSiblingNames(*d)
-		folders := map[string]string{"": parent}
-		var ensure func(string) (string, error)
-		ensure = func(relative string) (string, error) {
-			if id, ok := folders[relative]; ok {
-				return id, nil
-			}
-			above := path.Dir(relative)
-			if above == "." {
-				above = ""
-			}
-			parentID, err := ensure(above)
-			if err != nil {
-				return "", err
-			}
-			name := path.Base(relative)
-			if id := names.folders[parentID][shelfFoldName(name)]; id != "" {
-				folders[relative] = id
-				return id, nil
-			}
-			if d.depth(parentID) >= 32 {
-				return "", shelfProblem(400, "folder_depth", "Import would exceed 32 folder levels.")
-			}
-			f := shelfFolder{ID: newID("folder"), Parent: parentID, Name: names.reserve(parentID, name)}
-			names.addFolder(f)
+		createFolder := func(parentID, name string) string {
+			f := shelfFolder{ID: newID("folder"), Parent: parentID, Name: names.reserve(parentID, name, "")}
 			d.Folders[f.ID] = f
-			folders[relative] = f.ID
 			created = append(created, f)
-			return f.ID, nil
+			return f.ID
 		}
-		for _, folder := range batch.folders {
-			if _, err := ensure(folder); err != nil {
-				return err
+		for _, group := range batch.groups {
+			root := parent
+			if group.name != "" {
+				root = createFolder(parent, group.name)
 			}
-		}
-		for _, file := range batch.files {
-			folder := path.Dir(file.relative)
-			if folder == "." {
-				folder = ""
+			folders := map[string]string{".": root}
+			for _, folder := range group.folders {
+				folders[folder] = createFolder(folders[path.Dir(folder)], path.Base(folder))
 			}
-			parentID, err := ensure(folder)
-			if err != nil {
-				return err
+			for _, file := range group.files {
+				if err := copyShelfBlob(file.file, s.blobs.path(file.sum)); err != nil {
+					return err
+				}
+				if err := durableWrite(s.shelfThumbnailPath(file.sum, file.format), file.thumbnail); err != nil {
+					return err
+				}
+				parentID, name := folders[path.Dir(file.relative)], path.Base(file.relative)
+				model := shelfModel{ID: newID("model"), Parent: parentID, Name: names.reserve(parentID, name, path.Ext(name)), SHA256: file.sum, Format: file.format, Size: file.size}
+				d.Models[model.ID] = model
+				imported = append(imported, shelfImported{Path: file.source, Model: model, Preview: file.preview})
 			}
-			if err = copyShelfBlob(file.file, s.blobs.path(file.sum)); err != nil {
-				return err
-			}
-			if err = durableWrite(s.shelfThumbnailPath(file.sum, file.format), file.thumbnail); err != nil {
-				return err
-			}
-			model := shelfModel{ID: newID("model"), Parent: parentID, Name: names.reserve(parentID, path.Base(file.relative)), SHA256: file.sum, Format: file.format, Size: file.size}
-			d.Models[model.ID] = model
-			imported = append(imported, shelfImported{Path: file.source, Model: model, Preview: file.preview})
 		}
 		return nil
 	})
@@ -445,8 +450,31 @@ func (s *Server) uploadShelf(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, map[string]any{"revision": d.Revision, "imported": imported, "skipped": batch.skipped, "folders": created})
 	go s.blobs.evict()
 }
+
+func (s *Server) prepareShelfModel(ctx context.Context, f *shelfImportFile) error {
+	var err error
+	f.sum, err = mcpFileHash(f.file)
+	if err != nil {
+		return err
+	}
+	triangles, parseErr := readShelfMesh(ctx, s.cfg, f.file, f.format)
+	if parseErr != nil && f.format != ".step" && f.format != ".stp" {
+		return shelfProblem(400, "model_invalid", "A model contains invalid or unsupported geometry.")
+	}
+	if parseErr == nil {
+		f.thumbnail, err = renderShelfThumbnail(triangles)
+		if err == nil {
+			f.preview = "rendered"
+			return nil
+		}
+	}
+	f.preview = "placeholder"
+	f.thumbnail, err = shelfPlaceholderThumbnail()
+	return err
+}
+
 func (s *Server) shelfThumbnailPath(sum, format string) string {
-	return filepath.Join(s.library.dir, "shelf-thumbnails", sum+format+".png")
+	return filepath.Join(s.library.dir, "shelf-thumbnails", sum+format+".v2.png")
 }
 func (s *Server) shelfThumbnail(w http.ResponseWriter, r *http.Request) {
 	model, file, cleanup, err := s.shelfSource(r.PathValue("id"), nil)

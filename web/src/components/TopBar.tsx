@@ -245,6 +245,9 @@ export function TabBar() {
         <button type="button" aria-label="Device" aria-pressed={tab === 'device'} className="view-tab" onClick={() => showDevice()}>
           <span>Device</span>
         </button>
+        <button type="button" aria-label="Models" aria-pressed={tab === 'models'} className="view-tab" onClick={() => setState({ tab: 'models' })}>
+          <span>Models</span>
+        </button>
         <button type="button" aria-label="Library" aria-pressed={tab === 'library'} className="view-tab" onClick={() => setState({ tab: 'library' })}>
           <span>Library</span>
         </button>

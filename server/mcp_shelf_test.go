@@ -68,11 +68,11 @@ func TestMCPShelfUploadListAndPlacement(t *testing.T) {
 	archive := shelfZIP(t, map[string][]byte{"parts/nested.stl": []byte(shelfTestSTL), "readme.txt": []byte("skip")})
 	mcpTestRefusal(t, mcpTestCall(t, session, "upload_shelf_model", mcpShelfUploadInput{ExpectedRevision: 0, Name: "stale.zip", Data: base64.StdEncoding.EncodeToString(archive)}, nil), "revision_conflict")
 	zip := mcpShelfFixtureUpload(t, session, 1, "batch.zip", archive)
-	if zip.Revision != 2 || len(zip.Folders) != 1 || len(zip.Imported) != 1 || len(zip.Skipped) != 1 || zip.Imported[0].Model.SHA256 != plain.Imported[0].Model.SHA256 {
+	if zip.Revision != 2 || len(zip.Folders) != 2 || len(zip.Imported) != 1 || len(zip.Skipped) != 1 || zip.Imported[0].Model.SHA256 != plain.Imported[0].Model.SHA256 {
 		t.Fatalf("ZIP upload = %+v", zip)
 	}
-	folder, model := zip.Folders[0], zip.Imported[0].Model
-	mcpTestCall(t, session, "list_shelf", mcpShelfListInput{FolderID: &folder.ID}, &shelf)
+	model := zip.Imported[0].Model
+	mcpTestCall(t, session, "list_shelf", mcpShelfListInput{FolderID: &model.Parent}, &shelf)
 	if shelf.Revision != 2 || len(shelf.Folders) != 0 || len(shelf.Models) != 1 || shelf.Models[model.ID] != model {
 		t.Fatalf("folder listing = %+v", shelf)
 	}
@@ -172,12 +172,12 @@ func TestMCPShelfDeleteElicitsExactRecursiveTarget(t *testing.T) {
 	client := f.connect(t, nil)
 	zip := shelfZIP(t, map[string][]byte{"parts/deep/one.stl": []byte(shelfTestSTL), "other.stl": []byte(shelfTestSTL)})
 	report := mcpShelfFixtureUpload(t, client, 0, "fixture.zip", zip)
-	if len(report.Folders) != 2 || len(report.Imported) != 2 {
+	if len(report.Folders) != 3 || len(report.Imported) != 2 {
 		t.Fatalf("bad fixture: %+v", report)
 	}
 	var folder shelfFolder
 	for _, each := range report.Folders {
-		if each.Parent == "" {
+		if each.Name == "parts" {
 			folder = each
 		}
 	}
@@ -229,11 +229,11 @@ func TestMCPShelfDeleteElicitsExactRecursiveTarget(t *testing.T) {
 			mcpTestRefusal(t, mcpTestCall(t, session, "confirm_shelf_delete", prepared.approve(), nil), "already used")
 			var shelf shelfDocument
 			mcpTestCall(t, client, "list_shelf", nil, &shelf)
-			if tc.refusal != "" && (shelf.Revision != 1 || len(shelf.Folders) != 2 || len(shelf.Models) != 2) {
+			if tc.refusal != "" && (shelf.Revision != 1 || len(shelf.Folders) != 3 || len(shelf.Models) != 2) {
 				t.Fatalf("refused approval changed Shelf: %+v", shelf)
 			}
 			if tc.refusal == "" {
-				if shelf.Revision != 2 || len(shelf.Folders) != 0 || len(shelf.Models) != 1 {
+				if shelf.Revision != 2 || len(shelf.Folders) != 1 || len(shelf.Models) != 1 {
 					t.Fatalf("approved removal left the wrong Shelf: %+v", shelf)
 				}
 				for _, remaining := range shelf.Models {

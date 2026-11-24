@@ -36,8 +36,8 @@ type mcpShelfPlateInput struct {
 	ExpectedRevision        uint64   `json:"expected_revision" jsonschema:"Shelf revision returned by list_shelf"`
 	OperationID             string   `json:"operation_id" jsonschema:"Stable operation ID. Reuse this exact ID when retrying the same placement."`
 	Session                 string   `json:"session,omitempty" jsonschema:"Existing workspace editing session ID if operating on behalf of the editor that holds its lease"`
-	X                       *float64 `json:"x,omitempty" jsonschema:"X in millimeters on the target plate. Omit both x and y to use the saved printer's bed center."`
-	Y                       *float64 `json:"y,omitempty" jsonschema:"Y in millimeters on the target plate. Omit both x and y to use the saved printer's bed center."`
+	X                       *float64 `json:"x,omitempty" jsonschema:"X in millimeters on the target plate. Omit both x and y to find a free spot on the saved printer's bed."`
+	Y                       *float64 `json:"y,omitempty" jsonschema:"Y in millimeters on the target plate. Omit both x and y to find a free spot on the saved printer's bed."`
 }
 
 type mcpShelfDeleteInput struct {
@@ -72,7 +72,7 @@ type mcpPreparedShelfDelete struct {
 func (m *mcpService) addShelfTools(protocol *mcp.Server) {
 	mcpTool(protocol, "list_shelf", "List the saved model Shelf and its revision. Optionally list immediate children of one folder.", true, m.listShelf)
 	mcpTool(protocol, "upload_shelf_model", "Save a base64-encoded model or ZIP archive to the Shelf. Returns imported items, skipped files and the new Shelf revision.", false, m.uploadShelfModel)
-	mcpTool(protocol, "add_shelf_model_to_plate", "Add a Shelf model to an unlocked plate of a saved project. Requires the current Shelf and project revisions and a stable operation ID. Placement uses explicit x and y or the saved printer's bed center. This only saves the project.", false, m.addShelfModelToPlate)
+	mcpTool(protocol, "add_shelf_model_to_plate", "Add a Shelf model to an unlocked plate of a saved project. Requires the current Shelf and project revisions and a stable operation ID. Supply x and y or let the server find a free spot on the saved printer's bed. This only saves the project.", false, m.addShelfModelToPlate)
 	mcpTool(protocol, "prepare_shelf_delete", "Prepare a Shelf deletion and return the exact items it would remove. Show the full summary to the human and obtain explicit approval before confirm_shelf_delete.", false, m.prepareShelfDelete)
 	mcpTool(protocol, "confirm_shelf_delete", "Delete the exact prepared Shelf items after explicit human approval. Requires the session-bound single-use token, exact digest, and human_approved=true. Form elicitation must also be accepted when supported. Never infer approval.", false, m.confirmShelfDelete)
 }

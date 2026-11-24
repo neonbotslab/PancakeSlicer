@@ -1,6 +1,6 @@
 # Model shelf API
 
-The shelf stores reusable models and folders separately from saved projects. This phase provides REST and MCP access. It adds no shelf screen.
+The shelf stores reusable models and folders separately from saved projects. Open **Models** to browse, upload, organize, and add model copies to the current plate. The shelf also provides REST and MCP access.
 
 ## Access and revisions
 
@@ -34,16 +34,22 @@ Shelf writes require the revision from the latest listing. JSON mutations use `e
 | `POST /api/shelf/folders` | JSON `expectedRevision`, `name`, and optional `parent`. Returns the created folder and revision. |
 | `PATCH /api/shelf/folders/{id}` | JSON `expectedRevision` and `name`, `parent`, or both. |
 | `PATCH /api/shelf/models/{id}` | JSON `expectedRevision` and `name`, `parent`, or both. Renaming preserves the original content format. |
-| `DELETE /api/shelf/folders/{id}` | Requires `If-Match`. A populated folder also requires `?recursive=true`. |
-| `DELETE /api/shelf/models/{id}` | Requires `If-Match`. Removes the shelf entry. |
-| `GET /api/shelf/models/{id}/thumbnail.png` | Cached 320 by 320 PNG on a neutral background. Supports ETag revalidation. |
+| `DELETE /api/shelf/folders/{id}` | Requires `If-Match`. A populated folder also requires `?recursive=true`. Returns the active tree and an Undo receipt. |
+| `DELETE /api/shelf/models/{id}` | Requires `If-Match`. Returns the active tree and an Undo receipt. |
+| `POST /api/shelf/trash/{token}/restore` | JSON `expectedRevision`. Restores the entry or subtree and returns the active tree. |
+| `GET /api/shelf/models/{id}/thumbnail.png` | Cached 320 by 320 PNG with a transparent background. Supports ETag revalidation. |
+| `GET /api/shelf/models/{id}/geometry.stl` | Canonical STL geometry. Supply `?revision=<revision>` to check the shelf revision before reading. |
 | `POST /api/shelf/models/{id}/add-to-plate` | Adds geometry to a saved project through its normal save transaction. |
 
-Folder and model names share a case-insensitive sibling namespace. Names must be safe basenames of at most 240 UTF-8 bytes. Moves preserve IDs. Folder cycles and paths deeper than 32 folders are rejected. Rename and move collisions return 409. Upload collisions append a number before the extension, such as `bracket (2).stl`. Matching upload folders merge with existing folders. A folder that collides with a model gets a numbered name.
+Folder and model names share a case-insensitive sibling namespace. Names must be safe basenames of at most 240 UTF-8 bytes. Moves preserve IDs. Folder cycles and paths deeper than 32 folders are rejected. Rename and move collisions return 409. Upload and restore collisions append a number before a model's extension or after a folder's name. For example, `bracket.stl` becomes `bracket 2.stl` and `Parts` becomes `Parts 2`.
+
+Both DELETE routes return `tree` and `undo`. The `undo` object contains a `token` and an `expiresAt` timestamp 24 hours after deletion. Supply the token in the restore URL and the current shelf revision in the body. The receipt is consumed on success. Expired, consumed, and unknown receipts return 404 with `code: "undo_unavailable"`.
+
+Restoring keeps the original IDs and content. If the old parent is missing or would put a restored subtree past the depth limit, the entry returns at the root. Listings and restored trees contain active entries only.
 
 ## Uploads and ZIP archives
 
-Supported model extensions are STL, OBJ, 3MF, STEP, and STP, without regard to case. Multipart part names are unrestricted. Each part must have a safe filename. ZIP entry paths retain their folders, including explicit empty folders. The archive filename does not add another folder.
+Supported model extensions are STL, OBJ, 3MF, STEP, and STP, without regard to case. Multipart part names are unrestricted. Each part must have a safe filename. Each ZIP creates a separate folder named for the archive stem. The import retains subfolders and explicit empty folders, including an empty folder for an empty ZIP.
 
 The response contains the following fields.
 
@@ -61,11 +67,11 @@ ZIP entries cannot use absolute paths, drive prefixes, backslashes, empty segmen
 | Multipart request | The smaller of the configured server upload limit and 512 MiB, including multipart framing. |
 | One expanded file | The smaller of the configured server upload limit and 128 MiB. |
 | Total expanded bytes | 512 MiB, including skipped files. |
-| ZIP entries | 2,048 across the import. |
-| Expanded tree | 2,048 model entries and distinct explicit or implicit folder paths per import. |
+| Upload entries | 2,048 across all ZIP entries, archive folders, and standalone files. |
+| Expanded tree | 2,048 models, archive folders, and distinct explicit or implicit folder paths per import. |
 | ZIP central directory | 4 MiB, checked before parsing entries. |
 | Decompression ratio | At most 200 expanded bytes per compressed byte, per entry. |
-| Folder depth | 32. |
+| Folder depth | 32, including the destination path and archive folder. |
 | Parsed geometry | At most 1,000,000 expanded triangles and coordinates within 1,000,000 mm. |
 
 Limit failures return 413 for upload budgets. Invalid paths, archives, and supported mesh contents return 400. A model rejected by the geometry parser returns `model_invalid`.
@@ -86,9 +92,9 @@ The request requires the current shelf and project revisions, a stable operation
 }
 ```
 
-Plate indexes are one-based. Supply both coordinates or omit both to use the saved printer's bed center. If that center is unavailable, explicit coordinates are required. Insertion does not arrange neighboring objects or guarantee that the model fits the bed. Existing slicing validation remains responsible for printable bounds.
+Plate indexes are one-based. Supply both coordinates to use an explicit position. Omit both to find a free spot on the saved printer's bed. Automatic placement checks printable bounds and existing objects and returns 409 with `code: "placement_no_room"` when no spot fits. When the saved printer's bed is unavailable, the server requires explicit coordinates.
 
-The model becomes one geometry-only object with one instance and extruder 1. The source is a canonical STL asset with centered X and Y coordinates and its minimum Z at zero. 3MF build transforms, components, and units are applied. Source project settings, colors, painting, separate volume identities, and original plate layout are not imported. The shelf retains the original bytes.
+The model becomes one geometry-only object with one instance and extruder 1. The source is a canonical STL asset with centered X and Y coordinates and its minimum Z at zero. Copies preserve their original geometry when reopened. 3MF build transforms, components, and units are applied. Source project settings, colors, painting, separate volume identities, and original plate layout are not imported. The shelf retains the original bytes.
 
 The response includes `project_id`, `project_revision`, `plate_index`, `object_id`, `instance_id`, `source`, `sha256`, `revision`, and `operationId`. The project version history records the addition. Retrying the same operation ID and exact request replays the saved result. Reusing that ID for another request returns a conflict.
 
@@ -102,9 +108,9 @@ STEP uses the configured headless engine's geometry-only `--export-3mf-generic` 
 
 ## Persistence and collection
 
-The library envelope has an optional `shelf` field. Existing profile document schemas and revisions are unchanged. An old library without this field loads as an empty shelf at revision zero. Shelf writes atomically replace the envelope after syncing referenced blobs. Profile saves preserve shelf metadata.
+The library envelope stores active entries in `shelf` and deleted entries in `shelfTrash`. Both fields are optional. An old library without a shelf loads as an empty shelf at revision zero. Shelf writes atomically replace the envelope after syncing referenced blobs. Profile saves preserve active and deleted shelf entries.
 
-The shelf reuses the existing SHA-256 blob store. Duplicate content shares bytes. Eviction skips shelf references and content-addressed durable workspace assets. Only evictable bytes count toward the upload cache budget. Unreferenced blobs become eligible for the existing cache eviction policy. Shelf deletion does not immediately force collection below that budget. Existing project assets and retained history keep their current lifecycle and are not collected by shelf deletion. Thumbnail cache files are retained.
+The shelf reuses the existing SHA-256 blob store. Duplicate content shares bytes. Eviction skips active shelf entries, undoable entries, and content-addressed durable workspace assets. Listing, successful shelf writes, and blob eviction prune expired Undo records without advancing the shelf revision for cleanup. Unreferenced blobs then become eligible for the upload cache eviction policy. Thumbnail cache files are retained.
 
 The existing developer reset clears the shelf with the rest of the library. Older application binaries do not know the new envelope field and can discard it when saving. Keep backups before a downgrade.
 
@@ -125,5 +131,9 @@ Delete confirmation tokens are session-bound, short-lived, and single-use for th
 ## Verification
 
 From `server`, run `go vet -mod=vendor ./...` and `go test -mod=vendor -count=1 ./...`. Shelf tests use temporary libraries, assets, ZIP fixtures, and MCP transports. They cover migration, folder retention, upload limits, unsafe archives, thumbnails, revisions, plate insertion, retention, and deletion confirmation.
+
+Set `SHELF_REAL_TOOL` and `SHELF_REAL_RESOURCES` to a native engine and its resources, then run `go test -mod=vendor -run TestShelfSTEPWithNativeEngine -v .` from `server`. This checks three STEP fixtures through thumbnail conversion and saved-plate insertion. Optional `SHELF_EVIDENCE_DIR` saves their PNG previews.
+
+The browser check requires a development server connected to temporary fixture data, an empty shelf, and a selected printer preset. Run `npm run test:model-shelf --prefix web -- <fixture-dev-url> <screenshot-directory>` from the repository root. It captures the shelf states and verifies selection, copying, moves, keyboard controls, drop routing, and saved project contents.
 
 ![API and MCP verification with a temporary fixture library](images/model-shelf-api.png)

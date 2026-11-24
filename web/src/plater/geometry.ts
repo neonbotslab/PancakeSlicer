@@ -10,6 +10,7 @@ import type { MeshData, MeshIn, MeshOut } from './mesh.worker';
 import type { DisplayMesh } from './display-lod';
 import type { ProjectItem, ProjectMaterials } from './threemf';
 import { paintJson } from './paint';
+import { findFreeSpot } from './free-spot';
 
 
 const DEG = Math.PI / 180;
@@ -460,17 +461,13 @@ export function arrange(objects: PlateObject[], area: THREE.Vector2[], spacing =
   return objects.map((o) => ({ ...o, instances: o.instances.map((i) => ({ ...i, ...(placed.get(i.id) ?? {}) })) }));
 }
 
-export function nextFreeSpot(objects: PlateObject[], o: PlateObject, area: THREE.Vector2[]): { x: number; y: number } | null {
-  const { min, max } = bedBounds(area);
-  const size = objectSize(o);
-  const boxes = objects.flatMap((ob) => ob.instances.map((i) => instanceBox(ob, i)));
-  const step = Math.max(8, Math.min(size.x, size.y) / 4);
-  for (let y = max.y - size.y / 2 - 2; y >= min.y + size.y / 2; y -= step)
-    for (let x = min.x + size.x / 2 + 2; x <= max.x - size.x / 2; x += step) {
-      const cand = new T3.Box3(new T3.Vector3(x - size.x / 2 - 3, y - size.y / 2 - 3, -1), new T3.Vector3(x + size.x / 2 + 3, y + size.y / 2 + 3, 1e4));
-      if (!boxes.some((b) => b.intersectsBox(cand))) return { x, y };
-    }
-  return null;
+export function nextFreeSpot(objects: PlateObject[], o: PlateObject, area: THREE.Vector2[], excluded: THREE.Vector2[][] = []): { x: number; y: number } | null {
+  const box = instanceBox(o, o.instances[0]);
+  const occupied = objects.flatMap((ob) => ob.instances.map((i) => {
+    const bounds = instanceBox(ob, i);
+    return { minX: bounds.min.x, minY: bounds.min.y, maxX: bounds.max.x, maxY: bounds.max.y };
+  }));
+  return findFreeSpot({ width: box.max.x - box.min.x, depth: box.max.y - box.min.y, occupied, area, excluded });
 }
 
 export function nearestFreeSpot(objects: PlateObject[], size: THREE.Vector2, from: THREE.Vector2, area: THREE.Vector2[]): THREE.Vector2 | null {

@@ -2,19 +2,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
 type shelfPlateInput struct {
@@ -40,6 +41,57 @@ func (s *Server) addShelfModelToPlate(w http.ResponseWriter, r *http.Request) {
 	s.shelfModelToPlate(w, r, false)
 }
 
+func (s *Server) shelfCanonicalGeometry(ctx context.Context, id string, revision *uint64) (shelfModel, []shelfTriangle, []byte, error) {
+	model, file, cleanup, err := s.shelfSource(id, revision)
+	if err != nil {
+		return model, nil, nil, err
+	}
+	defer cleanup()
+	triangles, err := readShelfMesh(ctx, s.cfg, file, model.Format)
+	if err != nil {
+		return model, nil, nil, shelfProblem(422, "model_geometry_unavailable", "The server could not read geometry from this Shelf model.")
+	}
+	stl, _, err := shelfSTL(triangles)
+	if err != nil {
+		return model, nil, nil, shelfProblem(422, "model_geometry_unavailable", "The server could not convert this Shelf model to STL.")
+	}
+	return model, triangles, stl, nil
+}
+
+func (s *Server) shelfGeometry(w http.ResponseWriter, r *http.Request) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	var revision *uint64
+	if values, hasRevision := query["revision"]; err != nil || hasRevision && len(values) != 1 {
+		shelfFail(w, shelfProblem(400, "revision_invalid", "Supply a single numeric Shelf revision."))
+		return
+	} else if hasRevision {
+		n, err := strconv.ParseUint(values[0], 10, 64)
+		if err != nil {
+			shelfFail(w, shelfProblem(400, "revision_invalid", "Supply a single numeric Shelf revision."))
+			return
+		}
+		revision = &n
+	}
+	model, _, stl, err := s.shelfCanonicalGeometry(r.Context(), r.PathValue("id"), revision)
+	if err != nil {
+		shelfFail(w, err)
+		return
+	}
+	name := shelfGeometryName(model.Name) + ".stl"
+	w.Header().Set("Content-Type", "model/stl")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": name}))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(stl))
+}
+
+func shelfGeometryName(name string) string {
+	if stem := strings.TrimSuffix(name, filepath.Ext(name)); stem != "" {
+		return stem
+	}
+	return name
+}
+
 func (s *Server) shelfModelToPlate(w http.ResponseWriter, r *http.Request, transientLease bool) {
 	var in shelfPlateInput
 	if !workspaceDecode(w, r, &in) {
@@ -50,7 +102,7 @@ func (s *Server) shelfModelToPlate(w http.ResponseWriter, r *http.Request, trans
 		return
 	}
 	if (in.X == nil) != (in.Y == nil) || in.X != nil && (math.Abs(*in.X) > math.MaxFloat32 || math.Abs(*in.Y) > math.MaxFloat32) {
-		shelfFail(w, shelfProblem(400, "placement_invalid", "Supply both x and y coordinates, or omit both for the bed center."))
+		shelfFail(w, shelfProblem(400, "placement_invalid", "Supply both x and y coordinates, or omit both to find a free spot on the plate."))
 		return
 	}
 	store := s.workspace
@@ -76,42 +128,27 @@ func (s *Server) shelfModelToPlate(w http.ResponseWriter, r *http.Request, trans
 		shelfFail(w, err)
 		return
 	}
-	var point [2]float64
-	if in.X != nil {
-		point = [2]float64{*in.X, *in.Y}
-	} else {
-		var ok bool
-		point, ok = s.shelfPlateCenter(plate.doc)
-		if !ok {
-			shelfFail(w, shelfProblem(400, "placement_required", "The saved printer has no usable build plate center. Supply explicit x and y coordinates."))
-			return
-		}
-	}
-	model, file, cleanup, err := s.shelfSource(modelID, in.ExpectedRevision)
+	model, triangles, stl, err := s.shelfCanonicalGeometry(r.Context(), modelID, in.ExpectedRevision)
 	if err != nil {
 		shelfFail(w, err)
 		return
 	}
-	defer cleanup()
-	triangles, err := readShelfMesh(r.Context(), s.cfg, file, model.Format)
-	if err != nil {
-		shelfFail(w, shelfProblem(422, "model_geometry_unavailable", "The server could not read geometry from this Shelf model."))
-		return
-	}
-	stl, _, err := shelfSTL(triangles)
-	if err != nil {
-		shelfFail(w, shelfProblem(422, "model_geometry_unavailable", "The server could not convert this Shelf model to STL."))
-		return
+	var point shelfPlanePoint
+	if in.X != nil {
+		point = shelfPlanePoint{*in.X, *in.Y}
+	} else {
+		point, err = s.placeShelfGeometry(r.Context(), plate, triangles)
+		if err != nil {
+			shelfFail(w, err)
+			return
+		}
 	}
 	sum := sha256.Sum256(stl)
 	sha := hex.EncodeToString(sum[:])
 	source := "sha256-" + sha
-	name := strings.TrimSuffix(model.Name, filepath.Ext(model.Name))
-	if name == "" {
-		name = model.Name
-	}
+	name := shelfGeometryName(model.Name)
 	objectID, instanceID := plate.lastID+1, plate.lastID+2
-	record, err := plate.add(name, source, point, objectID, instanceID)
+	record, err := plate.add(name, source, point, objectID, instanceID, len(triangles))
 	if err != nil {
 		shelfFail(w, err)
 		return
@@ -226,7 +263,7 @@ func (p *shelfPlateEdit) observeIDs(objects []json.RawMessage) bool {
 	return true
 }
 
-func (p shelfPlateEdit) add(name, source string, point [2]float64, objectID, instanceID uint64) (json.RawMessage, error) {
+func (p shelfPlateEdit) add(name, source string, point [2]float64, objectID, instanceID uint64, triangles int) (json.RawMessage, error) {
 	var files map[string]json.RawMessage
 	if raw := p.doc["files"]; len(raw) > 0 && json.Unmarshal(raw, &files) != nil {
 		return nil, shelfProblem(400, "project_invalid", "The saved project asset list is unreadable.")
@@ -240,7 +277,8 @@ func (p shelfPlateEdit) add(name, source string, point [2]float64, objectID, ins
 	object := map[string]any{
 		"id": objectID, "name": name, "source": source, "rotX": 0, "rotY": 0, "scale": [3]int{1, 1, 1},
 		"extruder": 1, "settings": map[string]any{},
-		"instances": []map[string]any{{"id": instanceID, "x": point[0], "y": point[1], "rotZ": 0}},
+		"simplification": map[string]any{"trianglesBefore": triangles, "trianglesAfter": triangles, "maxErrorMm": 0, "kept": "original"},
+		"instances":      []map[string]any{{"id": instanceID, "x": point[0], "y": point[1], "rotZ": 0}},
 	}
 	objects := must(json.Marshal(append(p.objects, json.RawMessage(must(json.Marshal(object))))))
 	if p.target >= 0 {
@@ -259,64 +297,4 @@ func (p shelfPlateEdit) add(name, source string, point [2]float64, objectID, ins
 	p.meta["change"] = must(json.Marshal([]versionChange{{Label: "Added " + name + " from Shelf"}}))
 	p.record["meta"], p.record["doc"] = must(json.Marshal(p.meta)), must(json.Marshal(p.doc))
 	return json.Marshal(p.record)
-}
-
-func (s *Server) shelfPlateCenter(doc map[string]json.RawMessage) ([2]float64, bool) {
-	const areaKey = "printable_area"
-	var dirty struct{ Machine map[string]json.RawMessage }
-	json.Unmarshal(doc["dirty"], &dirty)
-	if area := dirty.Machine[areaKey]; len(area) > 0 {
-		return shelfBedCenter(area)
-	}
-	printerID := documentPrinter(doc, "")
-	if printerID == "" || s.catalog == nil {
-		return [2]float64{}, false
-	}
-	var snapshots struct{ Printer *resolve.Printer }
-	json.Unmarshal(doc["profileSnapshots"], &snapshots)
-	printer := snapshots.Printer
-	if printer == nil || printer.ID != printerID {
-		if library, err := s.libraryDocument(); err == nil {
-			printer = library.Printers[printerID]
-		}
-	}
-	if printer != nil && printer.ID == printerID {
-		if area := printer.Machine[areaKey]; len(area) > 0 {
-			return shelfBedCenter(area)
-		}
-		if len(printer.Nozzles) > 0 {
-			printerID = printer.Nozzles[0].Variant
-		}
-	}
-	if machine := s.catalog.Machine(printerID); machine != nil {
-		return shelfBedCenter(machine.Config[areaKey])
-	}
-	return [2]float64{}, false
-}
-
-func shelfBedCenter(area json.RawMessage) ([2]float64, bool) {
-	var bounds meshBounds
-	var polygon [][2]float64
-	for _, value := range resolve.ConfigList(area) {
-		x, y, ok := strings.Cut(value, "x")
-		xPos, errX := strconv.ParseFloat(strings.TrimSpace(x), 64)
-		yPos, errY := strconv.ParseFloat(strings.TrimSpace(y), 64)
-		if !ok || errX != nil || errY != nil || math.Abs(xPos) > math.MaxFloat32 || math.Abs(yPos) > math.MaxFloat32 || bounds.add(meshPoint{xPos, yPos, 0}) != nil {
-			return [2]float64{}, false
-		}
-		polygon = append(polygon, [2]float64{xPos, yPos})
-	}
-	if len(polygon) < 3 {
-		return [2]float64{}, false
-	}
-	center := [2]float64{(bounds.min[0] + bounds.max[0]) / 2, (bounds.min[1] + bounds.max[1]) / 2}
-	inside := false
-	previous := polygon[len(polygon)-1]
-	for _, point := range polygon {
-		if (point[1] > center[1]) != (previous[1] > center[1]) && center[0] < (previous[0]-point[0])*(center[1]-point[1])/(previous[1]-point[1])+point[0] {
-			inside = !inside
-		}
-		previous = point
-	}
-	return center, inside
 }

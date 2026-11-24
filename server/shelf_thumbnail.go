@@ -5,7 +5,6 @@ import (
 	"errors"
 	"image"
 	"image/color"
-	"image/draw"
 	"image/png"
 	"math"
 )
@@ -47,12 +46,6 @@ func (v shelfView) triangle(t shelfTriangle) shelfProjectedTriangle {
 		int(math.Ceil(max(a[0], b[0], c[0]))), int(math.Ceil(max(a[1], b[1], c[1]))),
 	).Intersect(image.Rect(0, 0, shelfThumbnailSize, shelfThumbnailSize))
 	return projected
-}
-
-func shelfThumbnailCanvas() *image.RGBA {
-	canvas := image.NewRGBA(image.Rect(0, 0, shelfThumbnailSize, shelfThumbnailSize))
-	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: color.RGBA{R: 242, G: 244, B: 247, A: 255}}, image.Point{}, draw.Src)
-	return canvas
 }
 
 func encodeShelfThumbnail(canvas *image.RGBA) ([]byte, error) {
@@ -100,7 +93,7 @@ func renderShelfThumbnail(triangles []shelfTriangle) ([]byte, error) {
 		estimatedWork += int64(box.Dx() * box.Dy())
 	}
 	stride := int(max(1, (estimatedWork+shelfThumbnailPixelLimit-1)/shelfThumbnailPixelLimit))
-	canvas := shelfThumbnailCanvas()
+	canvas := image.NewRGBA(image.Rect(0, 0, shelfThumbnailSize, shelfThumbnailSize))
 	depths := make([]float64, shelfThumbnailSize*shelfThumbnailSize)
 	for i := range depths {
 		depths[i] = math.Inf(-1)
@@ -132,7 +125,7 @@ func shelfFacetColor(t shelfTriangle) color.RGBA {
 	if length > 0 {
 		shade = math.Abs((normal[0]*0.32 + normal[1]*0.38 + normal[2]*0.86) / length)
 	}
-	return color.RGBA{R: uint8(62 + 88*shade), G: uint8(82 + 94*shade), B: uint8(111 + 93*shade), A: 255}
+	return color.RGBA{R: uint8(154 + 84*shade), G: uint8(148 + 84*shade), B: uint8(139 + 84*shade), A: 255}
 }
 
 func rasterShelfTriangle(canvas *image.RGBA, depths []float64, t shelfProjectedTriangle, fill color.RGBA) bool {
@@ -166,30 +159,12 @@ func rasterShelfTriangle(canvas *image.RGBA, depths []float64, t shelfProjectedT
 }
 
 func shelfPlaceholderThumbnail() ([]byte, error) {
-	canvas := shelfThumbnailCanvas()
-	stroke := color.RGBA{R: 127, G: 138, B: 155, A: 255}
-	for _, line := range [][2]image.Point{
-		{{X: 125, Y: 137}, {X: 195, Y: 137}},
-		{{X: 195, Y: 137}, {X: 195, Y: 184}},
-		{{X: 195, Y: 184}, {X: 125, Y: 184}},
-		{{X: 125, Y: 184}, {X: 125, Y: 137}},
-		{{X: 126, Y: 175}, {X: 146, Y: 155}},
-		{{X: 146, Y: 155}, {X: 163, Y: 172}},
-		{{X: 163, Y: 172}, {X: 177, Y: 157}},
-		{{X: 177, Y: 157}, {X: 194, Y: 174}},
-	} {
-		drawShelfThumbnailLine(canvas, line[0], line[1], stroke)
-	}
-	drawShelfThumbnailLine(canvas, image.Pt(118, 195), image.Pt(203, 125), color.RGBA{R: 72, G: 85, B: 104, A: 255})
-	return encodeShelfThumbnail(canvas)
-}
-
-func drawShelfThumbnailLine(canvas *image.RGBA, from, to image.Point, stroke color.RGBA) {
-	dx, dy := to.X-from.X, to.Y-from.Y
-	steps := int(max(math.Abs(float64(dx)), math.Abs(float64(dy))))
-	for i := 0; i <= steps; i++ {
-		x, y := from.X+dx*i/steps, from.Y+dy*i/steps
-		box := image.Rect(x-1, y-1, x+2, y+2)
-		draw.Draw(canvas, box, &image.Uniform{C: stroke}, image.Point{}, draw.Src)
-	}
+	return renderShelfThumbnail([]shelfTriangle{
+		{{0, 0, 1}, {1, 0, 1}, {1, 1, 1}},
+		{{0, 0, 1}, {1, 1, 1}, {0, 1, 1}},
+		{{1, 0, 0}, {1, 1, 0}, {1, 1, 1}},
+		{{1, 0, 0}, {1, 1, 1}, {1, 0, 1}},
+		{{1, 1, 0}, {0, 1, 0}, {0, 1, 1}},
+		{{1, 1, 0}, {0, 1, 1}, {1, 1, 1}},
+	})
 }

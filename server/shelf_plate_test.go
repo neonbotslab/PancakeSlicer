@@ -24,7 +24,7 @@ const shelfTestProjectRecord = `{
     "plateIndex":2, "events":[{"type":"pause","z":6}],
     "dirty":{"machine":{"printable_area":"-40x20,160x20,160x100,-40x100"}},
     "futureDoc":{"vendor":"kept"},
-    "objects":[{"id":20,"source":"original-native","instances":[{"id":21}],"project":{"buildIndex":3},"futureObject":[1,2]}],
+    "objects":[{"id":20,"source":"original-native","rotX":0,"rotY":0,"scale":[1,1,1],"instances":[{"id":21,"x":30,"y":60,"rotZ":0}],"project":{"buildIndex":3},"futureObject":[1,2]}],
     "projectPlates":[
       {"index":1,"objects":[{"id":95,"source":"original-native","instances":[{"id":96}],"volumes":[{"id":180}]}],"events":[{"type":"custom"}],"futurePlate":"kept"},
       {"index":2,"objects":[{"id":150,"instances":[{"id":151}]}],"origin":[130,250],"futurePlate":2},
@@ -86,7 +86,12 @@ func shelfTestUploadOne(t *testing.T, h http.Handler, revision uint64, name stri
 func TestShelfPlacementPreservesProjectAndReplays(t *testing.T) {
 	s, _ := shelfFixture(t)
 	h := shelfWorkspaceFixture(t, s)
-	native := shelfZIP(t, map[string][]byte{"3D/3dmodel.model": []byte(`<model/>`)})
+	native := shelfZIP(t, map[string][]byte{"3D/3dmodel.model": []byte(`<model><resources>
+	  <object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="15" y="0" z="0"/><vertex x="0" y="15" z="10"/></vertices>
+	  <triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>
+	  <object id="2"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="150" y="0" z="0"/><vertex x="0" y="100" z="10"/></vertices>
+	  <triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+	  <build><item objectid="2"/><item objectid="2"/><item objectid="2"/><item objectid="1"/></build></model>`)})
 	asset := httptest.NewRequest("PUT", "/api/assets/original-native", bytes.NewReader(native))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, asset)
@@ -108,6 +113,11 @@ func TestShelfPlacementPreservesProjectAndReplays(t *testing.T) {
 	}
 	assetBody := shelfJSON(t, h, "GET", "/api/assets/"+result.Source, nil, nil)
 	shelfRequireStatus(t, assetBody, http.StatusOK)
+	geometry := shelfJSON(t, h, "GET", "/api/shelf/models/"+model.ID+"/geometry.stl?revision=1", nil, nil)
+	shelfRequireStatus(t, geometry, http.StatusOK)
+	if !bytes.Equal(geometry.Body.Bytes(), assetBody.Body.Bytes()) {
+		t.Fatal("geometry download and saved workspace asset use different bytes")
+	}
 	sum := sha256.Sum256(assetBody.Body.Bytes())
 	if result.SHA256 != hex.EncodeToString(sum[:]) || result.Source != "sha256-"+result.SHA256 || assetBody.Header().Get("X-Content-SHA256") != result.SHA256 {
 		t.Fatalf("returned asset %q has a different digest: %+v", result.Source, sum)
@@ -177,14 +187,16 @@ func TestShelfPlacementPreservesProjectAndReplays(t *testing.T) {
 		t.Fatalf("native object was modified: %+v", saved.Doc.Objects[0])
 	}
 	for _, tc := range []struct {
-		object map[string]any
-		x, y   float64
-	}{{plates[0].Objects[1], 22, 29}, {saved.Doc.Objects[1], 60, 60}} {
+		object   map[string]any
+		explicit bool
+	}{{plates[0].Objects[1], true}, {saved.Doc.Objects[1], false}} {
 		if tc.object["source"] != result.Source || tc.object["extruder"] != 1.0 || !reflect.DeepEqual(tc.object["scale"], []any{1.0, 1.0, 1.0}) {
 			t.Fatalf("new object is not normal workspace geometry: %+v", tc.object)
 		}
 		instance := tc.object["instances"].([]any)[0].(map[string]any)
-		if instance["x"] != tc.x || instance["y"] != tc.y || instance["rotZ"] != 0.0 {
+		x, y := instance["x"].(float64), instance["y"].(float64)
+		if instance["rotZ"] != 0.0 || tc.explicit && (x != 22 || y != 29) ||
+			!tc.explicit && (x < -32.5 || x > 152.5 || y < 27.5 || y > 92.5 || math.Abs(x-30) < 15 && math.Abs(y-60) < 15) {
 			t.Fatalf("wrong placement: %+v", instance)
 		}
 	}

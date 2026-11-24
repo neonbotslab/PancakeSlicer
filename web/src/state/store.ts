@@ -134,7 +134,7 @@ export interface LibraryTarget { type: PresetType; name?: string; edit?: boolean
   stage?: import('../profiles/project-draft').ProfileSave; at: number }
 
 export interface SlideOutTarget { type: PresetType; key: string; setting?: string; at: number }
-export type MainTab = 'projects' | 'prepare' | 'preview' | 'device' | 'library';
+export type MainTab = 'projects' | 'prepare' | 'preview' | 'device' | 'models' | 'library';
 export type CalibMenu = 'temperature' | 'max-flowrate' | 'pressure-advance' | 'flow-ratio' | 'retraction' | 'cornering' | 'input-shaping-freq' | 'input-shaping-damp' | 'vfa' | 'nonplanar';
 export type Gizmo = 'none' | 'move' | 'rotate' | 'scale' | 'flatten' | 'cut' | 'slant' | 'measure' | 'layers' | 'brimears' | 'boolean' | 'text' | 'svg' | PaintKind;
 
