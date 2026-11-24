@@ -1,0 +1,12 @@
+{
+	"type": "filament",
+	"name": "Generic ABS @Micron+",
+	"inherits": "Generic ABS @System",
+	"from": "system",
+	"setting_id": "QVffFwI1vDXuvt0s",
+	"instantiation": "true",
+	"compatible_printers": [
+		"Micron+ 0.4 nozzle"
+	],
+	"compatible_printers_condition": ""
+}

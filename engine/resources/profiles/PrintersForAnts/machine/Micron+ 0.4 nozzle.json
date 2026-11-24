@@ -1,0 +1,76 @@
+{
+	"type": "machine",
+	"name": "Micron+ 0.4 nozzle",
+	"inherits": "fdm_klipper_micron_common",
+	"from": "system",
+	"setting_id": "WTvrCbD3kXas4R4L",
+	"instantiation": "true",
+	"printer_model": "Micron+",
+	"printer_variant": "0.4",
+	"printer_structure": "corexy",
+	"gcode_flavor": "klipper",
+	"nozzle_diameter": [
+		"0.4"
+	],
+	"min_layer_height": [
+		"0.10"
+	],
+	"max_layer_height": [
+		"0.32"
+	],
+	"printable_area": [
+		"0x0",
+		"173x0",
+		"173x180",
+		"0x180"
+	],
+	"printable_height": "165",
+	"default_print_profile": "0.20mm Standard @Micron+",
+	"default_filament_profile": [
+		"Generic PLA @Micron+"
+	],
+	"nonplanar_head": "",
+	"support_chamber_temp_control": "0",
+	"machine_max_acceleration_extruding": [
+		"5000",
+		"5000"
+	],
+	"machine_max_acceleration_travel": [
+		"5000",
+		"5000"
+	],
+	"machine_max_acceleration_x": [
+		"5000",
+		"5000"
+	],
+	"machine_max_acceleration_y": [
+		"5000",
+		"5000"
+	],
+	"machine_max_acceleration_z": [
+		"350",
+		"350"
+	],
+	"machine_max_speed_x": [
+		"200",
+		"200"
+	],
+	"machine_max_speed_y": [
+		"200",
+		"200"
+	],
+	"machine_max_speed_z": [
+		"25",
+		"25"
+	],
+	"machine_max_jerk_x": [
+		"5",
+		"5"
+	],
+	"machine_max_jerk_y": [
+		"5",
+		"5"
+	],
+	"machine_start_gcode": "M104 S0\nM140 S0\nPRINT_START EXTRUDER=[nozzle_temperature_initial_layer] BED=[bed_temperature_initial_layer_single] CHAMBER=[chamber_temperature]",
+	"machine_end_gcode": "PRINT_END"
+}

@@ -1,0 +1,31 @@
+Micron+ profile and build plate assets
+
+The Printers For Ants Micron project distributes the following files under
+the GNU General Public License, version 3 (GPL-3.0). The assets are included
+unmodified from revision d350f19f60a2d90a6e6866bccc906fff638677c2.
+A copy of the license is included in COPYING.
+
+https://github.com/PrintersForAnts/Micron/tree/d350f19f60a2d90a6e6866bccc906fff638677c2
+
+  Firmware/Slicer/BedModel/micron-bed-model-simple-180.stl
+  Firmware/Slicer/BedModel/micron-180-grid.png
+
+https://github.com/PrintersForAnts/Micron/blob/d350f19f60a2d90a6e6866bccc906fff638677c2/LICENSE
+
+The machine profile adapts the community Micron+ 0.4 mm OrcaSlicer preset
+from kwankiu/Micron, branch slicer_profile, revision
+874a62c3ddd636df0450975c8fdf38ab03791767 (GPL-3.0).
+
+https://github.com/kwankiu/Micron/blob/874a62c3ddd636df0450975c8fdf38ab03791767/Slicer_Profiles/OrcaSlicer/Micron%2B%200.4%20nozzle.json
+https://github.com/kwankiu/Micron/blob/874a62c3ddd636df0450975c8fdf38ab03791767/LICENSE
+
+The local machine and process baselines adapt the Voron presets in
+PancakeSlicer's engine/resources/profiles/Voron. The Micron+ profile uses
+the PRINT_START and PRINT_END macros and motion limits from the official
+Klipper template.
+The printable area uses the 180 mm build's X limit of 173 mm and the nominal
+180 mm bed depth within the 190 mm Y travel. The 165 mm print height is the
+template's Z travel limit. The firmware template limits the hotend to 300 C
+and the bed to 120 C.
+
+https://github.com/PrintersForAnts/Micron/blob/d350f19f60a2d90a6e6866bccc906fff638677c2/Firmware/printer_data/config/printer.cfg

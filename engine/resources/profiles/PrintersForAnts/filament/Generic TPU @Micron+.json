@@ -1,0 +1,12 @@
+{
+	"type": "filament",
+	"name": "Generic TPU @Micron+",
+	"inherits": "Generic TPU @System",
+	"from": "system",
+	"setting_id": "12RVDh6ysCPCkkA8",
+	"instantiation": "true",
+	"compatible_printers": [
+		"Micron+ 0.4 nozzle"
+	],
+	"compatible_printers_condition": ""
+}

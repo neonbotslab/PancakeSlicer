@@ -1,0 +1,12 @@
+{
+	"type": "filament",
+	"name": "Generic PLA @Micron+",
+	"inherits": "Generic PLA @System",
+	"from": "system",
+	"setting_id": "QI3DRfjRoMn3cJ8O",
+	"instantiation": "true",
+	"compatible_printers": [
+		"Micron+ 0.4 nozzle"
+	],
+	"compatible_printers_condition": ""
+}

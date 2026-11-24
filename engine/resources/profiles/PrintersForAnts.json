@@ -1,0 +1,62 @@
+{
+	"name": "PrintersForAnts",
+	"version": "02.04.00.01",
+	"force_update": "0",
+	"description": "Printers For Ants configurations",
+	"machine_model_list": [
+		{
+			"name": "Micron+",
+			"sub_path": "machine/Micron+.json"
+		}
+	],
+	"machine_list": [
+		{
+			"name": "fdm_klipper_micron_common",
+			"sub_path": "machine/fdm_klipper_micron_common.json"
+		},
+		{
+			"name": "Micron+ 0.4 nozzle",
+			"sub_path": "machine/Micron+ 0.4 nozzle.json"
+		}
+	],
+	"process_list": [
+		{
+			"name": "fdm_process_micron_common",
+			"sub_path": "process/fdm_process_micron_common.json"
+		},
+		{
+			"name": "0.12mm Fine @Micron+",
+			"sub_path": "process/0.12mm Fine @Micron+.json"
+		},
+		{
+			"name": "0.20mm Standard @Micron+",
+			"sub_path": "process/0.20mm Standard @Micron+.json"
+		},
+		{
+			"name": "0.28mm Extra Draft @Micron+",
+			"sub_path": "process/0.28mm Extra Draft @Micron+.json"
+		}
+	],
+	"filament_list": [
+		{
+			"name": "Generic ABS @Micron+",
+			"sub_path": "filament/Generic ABS @Micron+.json"
+		},
+		{
+			"name": "Generic ASA @Micron+",
+			"sub_path": "filament/Generic ASA @Micron+.json"
+		},
+		{
+			"name": "Generic PETG @Micron+",
+			"sub_path": "filament/Generic PETG @Micron+.json"
+		},
+		{
+			"name": "Generic PLA @Micron+",
+			"sub_path": "filament/Generic PLA @Micron+.json"
+		},
+		{
+			"name": "Generic TPU @Micron+",
+			"sub_path": "filament/Generic TPU @Micron+.json"
+		}
+	]
+}

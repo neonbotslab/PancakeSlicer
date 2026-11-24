@@ -1,0 +1,12 @@
+{
+	"type": "filament",
+	"name": "Generic PETG @Micron+",
+	"inherits": "Generic PETG @System",
+	"from": "system",
+	"setting_id": "CetgBJLw1mRK8N20",
+	"instantiation": "true",
+	"compatible_printers": [
+		"Micron+ 0.4 nozzle"
+	],
+	"compatible_printers_condition": ""
+}

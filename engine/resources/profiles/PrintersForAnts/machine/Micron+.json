@@ -1,0 +1,13 @@
+{
+	"type": "machine_model",
+	"name": "Micron+",
+	"model_id": "MicronPlus",
+	"nozzle_diameter": "0.4",
+	"machine_tech": "FFF",
+	"family": "PrintersForAnts",
+	"bed_model": "micron-bed-model-simple-180.stl",
+	"bed_texture": "micron-180-grid.png",
+	"default_bed_type": "Textured PEI Plate",
+	"hotend_model": "",
+	"default_materials": "Generic PLA @Micron+;Generic PETG @Micron+;Generic ABS @Micron+;Generic ASA @Micron+;Generic TPU @Micron+"
+}

@@ -1,0 +1,12 @@
+{
+	"type": "filament",
+	"name": "Generic ASA @Micron+",
+	"inherits": "Generic ASA @System",
+	"from": "system",
+	"setting_id": "RVRfJFzRNdX9Pm88",
+	"instantiation": "true",
+	"compatible_printers": [
+		"Micron+ 0.4 nozzle"
+	],
+	"compatible_printers_condition": ""
+}

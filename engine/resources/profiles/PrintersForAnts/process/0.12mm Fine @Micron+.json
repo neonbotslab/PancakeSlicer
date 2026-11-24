@@ -1,0 +1,14 @@
+{
+	"type": "process",
+	"name": "0.12mm Fine @Micron+",
+	"inherits": "fdm_process_micron_common",
+	"from": "system",
+	"setting_id": "5c29BskbyIXirYwe",
+	"instantiation": "true",
+	"layer_height": "0.12",
+	"bottom_shell_layers": "5",
+	"top_shell_layers": "6",
+	"compatible_printers": [
+		"Micron+ 0.4 nozzle"
+	]
+}
