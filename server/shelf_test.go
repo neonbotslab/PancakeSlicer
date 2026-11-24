@@ -22,7 +22,10 @@ const shelfTestSTL = "solid sample\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0
 
 func shelfFixture(t *testing.T) (*Server, http.Handler) {
 	t.Helper()
-	root := t.TempDir()
+	return shelfFixtureAt(t, t.TempDir())
+}
+func shelfFixtureAt(t *testing.T, root string) (*Server, http.Handler) {
+	t.Helper()
 	catalog := mcpFixtureCatalog(t)
 	s := &Server{cfg: Config{DataDir: root, MaxUploadSize: 8 << 20}, catalog: catalog, library: &libraryStore{dir: root, catalog: catalog, settled: true}, workspace: &workspaceStore{root: filepath.Join(root, "workspace")}, blobs: &blobStore{root: filepath.Join(root, "blobs"), limit: blobCacheBytes}}
 	s.blobs.retained = s.retainedShelfBlobs
@@ -121,7 +124,7 @@ func TestShelfZIPFoldersDedupAndThumbnails(t *testing.T) {
 	for _, f := range d.Folders {
 		names[f.Name] = f
 	}
-	if len(names) != 3 || names["sub"].Parent != names["parts"].ID || names["empty"].Parent != "" {
+	if len(names) != 4 || names["models"].Parent != "" || names["sub"].Parent != names["parts"].ID || names["empty"].Parent != names["models"].ID || names["parts"].Parent != names["models"].ID {
 		t.Fatalf("folders %+v", names)
 	}
 	sums := map[string]bool{}
@@ -189,7 +192,7 @@ func TestShelfZIPFoldersDedupAndThumbnails(t *testing.T) {
 	d, _ = s.shelfSnapshot()
 	found := false
 	for _, m := range d.Models {
-		found = found || m.Name == "copy (2).stl"
+		found = found || m.Name == "copy 2.stl"
 	}
 	if !found {
 		t.Fatal("collision did not use numbered suffix")
@@ -241,6 +244,7 @@ func TestShelfZIPLimits(t *testing.T) {
 		status  int
 	}{
 		{"count", shelfLimits{FileBytes: 1024, TotalBytes: 4096, Entries: 1, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL), "two.stl": []byte(shelfTestSTL)}, 413},
+		{"wrapper count", shelfLimits{FileBytes: 1024, TotalBytes: 4096, Entries: 1, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL)}, 413},
 		{"file", shelfLimits{FileBytes: 8, TotalBytes: 4096, Entries: 10, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL)}, 413},
 		{"total", shelfLimits{FileBytes: 1024, TotalBytes: int64(len(shelfTestSTL) + 1), Entries: 10, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL), "two.stl": []byte(shelfTestSTL)}, 413},
 		{"ratio", shelfLimits{FileBytes: 1 << 20, TotalBytes: 2 << 20, Entries: 10, Ratio: 10}, map[string][]byte{"bomb.txt": bytes.Repeat([]byte("a"), 65536)}, 413},
@@ -386,9 +390,15 @@ func TestShelfEvictionRetainsShelfAndProjectAssets(t *testing.T) {
 	if _, err := os.Stat(s.blobs.path(sum)); err != nil {
 		t.Fatal("evicted project asset blob", err)
 	}
-	if _, err := s.shelfDelete(model.ID, false, 1, false); err != nil {
+	removed, err := s.shelfRemove(model.ID, false, 1, false)
+	if err != nil {
 		t.Fatal(err)
 	}
+	s.blobs.evict()
+	if _, err := os.Stat(s.blobs.path(model.SHA256)); err != nil {
+		t.Fatal("evicted undoable shelf blob", err)
+	}
+	shelfTestExpire(t, s, removed.Undo)
 	for until := time.Now().Add(time.Second); time.Now().Before(until); {
 		s.blobs.evict()
 		if _, err := os.Stat(s.blobs.path(model.SHA256)); os.IsNotExist(err) {
@@ -451,18 +461,18 @@ func TestShelfUploadLongDirectoryCollision(t *testing.T) {
 	for key := range d.Models {
 		id = key
 	}
-	name := "." + strings.Repeat("x", 239)
+	name := "." + strings.Repeat("x", 235)
 	w = shelfJSON(t, h, "PATCH", "/api/shelf/models/"+id, map[string]any{"expectedRevision": 1, "name": name}, nil)
 	shelfRequireStatus(t, w, 200)
-	data := shelfZIP(t, map[string][]byte{name + "/part.stl": []byte(shelfTestSTL)})
-	w = shelfUpload(t, h, 2, "", map[string][]byte{"models.zip": data})
+	data := shelfZIP(t, map[string][]byte{"part.stl": []byte(shelfTestSTL)})
+	w = shelfUpload(t, h, 2, "", map[string][]byte{name + ".zip": data})
 	shelfRequireStatus(t, w, 201)
 	d, _ = s.shelfSnapshot()
 	if len(d.Folders) != 1 || len(d.Models) != 2 {
 		t.Fatalf("collision import failed %+v", d)
 	}
 	for _, folder := range d.Folders {
-		if len(folder.Name) > 240 || !strings.HasSuffix(folder.Name, " (2)") {
+		if !shelfName(folder.Name) || folder.Name != name+" 2" {
 			t.Fatalf("unsafe collision suffix %q", folder.Name)
 		}
 	}
@@ -513,7 +523,7 @@ func TestShelfEdgeOnPreviewAndFormatCache(t *testing.T) {
 
 func TestShelfZIPMaximumFolderDepth(t *testing.T) {
 	s, h := shelfFixture(t)
-	folder := strings.TrimSuffix(strings.Repeat("a/", 32), "/")
+	folder := strings.TrimSuffix(strings.Repeat("a/", 31), "/")
 	data := shelfZIP(t, map[string][]byte{folder + "/model.stl": []byte(shelfTestSTL)})
 	w := shelfUpload(t, h, 0, "", map[string][]byte{"deep.zip": data})
 	shelfRequireStatus(t, w, 201)
@@ -521,13 +531,22 @@ func TestShelfZIPMaximumFolderDepth(t *testing.T) {
 	if len(d.Folders) != 32 || len(d.Models) != 1 {
 		t.Fatalf("maximum-depth folders not retained %+v", d)
 	}
+	tooDeep := shelfZIP(t, map[string][]byte{folder + "/a/model.stl": []byte(shelfTestSTL)})
+	w = shelfUpload(t, h, 1, "", map[string][]byte{"deep.zip": tooDeep})
+	shelfRequireStatus(t, w, 400)
+	for _, f := range d.Folders {
+		if d.depth(f.ID) == 32 {
+			w = shelfUpload(t, h, 1, f.ID, map[string][]byte{"empty.zip": shelfZIP(t, nil)})
+			shelfRequireStatus(t, w, 400)
+		}
+	}
 }
 
 func TestShelfLimitsImplicitFolderExpansion(t *testing.T) {
 	s, h := shelfFixture(t)
 	entries := map[string][]byte{}
 	for i := 0; i < 65; i++ {
-		folder := fmt.Sprintf("branch-%d/", i) + strings.Repeat("nested/", 31)
+		folder := fmt.Sprintf("branch-%d/", i) + strings.Repeat("nested/", 30)
 		entries[folder+"part.stl"] = []byte(shelfTestSTL)
 	}
 	w := shelfUpload(t, h, 0, "", map[string][]byte{"expanded.zip": shelfZIP(t, entries)})
@@ -545,7 +564,7 @@ func TestShelfLimitsImplicitFolderExpansion(t *testing.T) {
 	}
 }
 
-func TestShelfUnicodeCollisionsAndFolderMerge(t *testing.T) {
+func TestShelfUnicodeCollisionsAndDistinctArchives(t *testing.T) {
 	s, h := shelfFixture(t)
 	for i, name := range []string{"Σ.stl", "ς.stl", "σ.stl"} {
 		w := shelfUpload(t, h, uint64(i), "", map[string][]byte{name: []byte(shelfTestSTL)})
@@ -556,17 +575,27 @@ func TestShelfUnicodeCollisionsAndFolderMerge(t *testing.T) {
 	for _, model := range d.Models {
 		names[model.Name] = true
 	}
-	for _, name := range []string{"Σ.stl", "ς (2).stl", "σ (3).stl"} {
+	for _, name := range []string{"Σ.stl", "ς 2.stl", "σ 3.stl"} {
 		if !names[name] {
 			t.Fatalf("missing folded collision name %q in %v", name, names)
 		}
 	}
-	for i, name := range []string{"Σ", "ς"} {
-		w := shelfUpload(t, h, uint64(i+3), "", map[string][]byte{"folder.zip": shelfZIP(t, map[string][]byte{name + "/model.stl": []byte(shelfTestSTL)})})
-		shelfRequireStatus(t, w, 201)
-	}
+	w := shelfUpload(t, h, 3, "", map[string][]byte{
+		"folder.zip": shelfZIP(t, map[string][]byte{"Σ/model.stl": []byte(shelfTestSTL), "ς/model.stl": []byte(shelfTestSTL)}),
+		"folder.ZIP": shelfZIP(t, map[string][]byte{"Σ/model.stl": []byte(shelfTestSTL), "docs/notes.txt": []byte("skip")}),
+		"empty.zip":  shelfZIP(t, nil),
+	})
+	shelfRequireStatus(t, w, 201)
 	d, _ = s.shelfSnapshot()
-	if len(d.Folders) != 1 {
-		t.Fatalf("case-folded folders did not merge %+v", d.Folders)
+	roots, nestedNames := map[string]bool{}, map[string]int{}
+	for _, f := range d.Folders {
+		if f.Parent == "" {
+			roots[f.Name] = true
+		} else {
+			nestedNames[shelfFoldName(f.Name)]++
+		}
+	}
+	if len(d.Folders) != 7 || len(d.Models) != 6 || len(roots) != 3 || !roots["folder"] || !roots["folder 2"] || !roots["empty"] || nestedNames[shelfFoldName("Σ")] != 2 || nestedNames[shelfFoldName("Σ 2")] != 1 {
+		t.Fatalf("archives or archive paths merged %+v", d)
 	}
 }

@@ -13,6 +13,11 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	shelfMaxNameBytes   = 240
+	shelfMaxFolderDepth = 32
+)
+
 type shelfDocument struct {
 	Revision uint64                 `json:"revision"`
 	Folders  map[string]shelfFolder `json:"folders"`
@@ -66,16 +71,14 @@ func shelfOf(e *libraryEnvelope) shelfDocument {
 	return d
 }
 func (s *Server) shelfSnapshot() (shelfDocument, error) {
-	s.library.mu.Lock()
-	defer s.library.mu.Unlock()
-	e, _, err := s.library.readEnvelope()
+	e, _, err := s.shelfEnvelopeSnapshot(false)
 	if err != nil {
 		return shelfDocument{}, err
 	}
 	return shelfOf(e), nil
 }
 func shelfName(name string) bool {
-	return utf8.ValidString(name) && name != "" && strings.TrimSpace(name) == name && name != "." && name != ".." && len(name) <= 240 && !strings.ContainsAny(name, "/\\:") && strings.IndexFunc(name, unicode.IsControl) < 0
+	return utf8.ValidString(name) && name != "" && strings.TrimSpace(name) == name && name != "." && name != ".." && len(name) <= shelfMaxNameBytes && !strings.ContainsAny(name, "/\\:") && strings.IndexFunc(name, unicode.IsControl) < 0
 }
 func (d shelfDocument) parentExists(parent string) bool {
 	if parent == "" {
@@ -99,9 +102,8 @@ func (d shelfDocument) nameTaken(parent, name, except string) bool {
 }
 
 type shelfSiblingNames struct {
-	used    map[string]map[string]bool
-	next    map[string]int
-	folders map[string]map[string]string
+	used map[string]map[string]bool
+	next map[string]int
 }
 
 func shelfFoldName(name string) string {
@@ -114,21 +116,14 @@ func shelfFoldName(name string) string {
 	}, name)
 }
 func newShelfSiblingNames(d shelfDocument) *shelfSiblingNames {
-	names := &shelfSiblingNames{used: map[string]map[string]bool{}, next: map[string]int{}, folders: map[string]map[string]string{}}
+	names := &shelfSiblingNames{used: map[string]map[string]bool{}, next: map[string]int{}}
 	for _, folder := range d.Folders {
-		names.addFolder(folder)
+		names.add(folder.Parent, folder.Name)
 	}
 	for _, model := range d.Models {
 		names.add(model.Parent, model.Name)
 	}
 	return names
-}
-func (n *shelfSiblingNames) addFolder(folder shelfFolder) {
-	n.add(folder.Parent, folder.Name)
-	if n.folders[folder.Parent] == nil {
-		n.folders[folder.Parent] = map[string]string{}
-	}
-	n.folders[folder.Parent][shelfFoldName(folder.Name)] = folder.ID
 }
 func (n *shelfSiblingNames) add(parent, name string) {
 	if n.used[parent] == nil {
@@ -136,25 +131,29 @@ func (n *shelfSiblingNames) add(parent, name string) {
 	}
 	n.used[parent][shelfFoldName(name)] = true
 }
-func (n *shelfSiblingNames) reserve(parent, name string) string {
+func (n *shelfSiblingNames) reserve(parent, name, ext string) string {
 	if !n.used[parent][shelfFoldName(name)] {
 		n.add(parent, name)
 		return name
 	}
-	ext := filepath.Ext(name)
-	if !shelfModelFormat(strings.ToLower(ext)) {
+	if ext == name {
 		ext = ""
 	}
 	base := strings.TrimSuffix(name, ext)
-	key := parent + "\x00" + shelfFoldName(name)
+	key := parent + "\x00" + shelfFoldName(base) + "\x00" + shelfFoldName(ext)
+	_, firstWidth := utf8.DecodeRuneInString(base)
 	for i := max(2, n.next[key]); ; i++ {
-		suffix := fmt.Sprintf(" (%d)%s", i, ext)
+		number := fmt.Sprintf(" %d", i)
+		suffix := number + ext
 		trimmed := base
-		for len(trimmed)+len(suffix) > 240 {
+		if firstWidth+len(suffix) > shelfMaxNameBytes {
+			trimmed, suffix = name, number
+		}
+		for len(trimmed)+len(suffix) > shelfMaxNameBytes {
 			_, width := utf8.DecodeLastRuneInString(trimmed)
 			trimmed = trimmed[:len(trimmed)-width]
 		}
-		candidate := trimmed + suffix
+		candidate := strings.TrimRightFunc(trimmed, unicode.IsSpace) + suffix
 		if !n.used[parent][shelfFoldName(candidate)] {
 			n.next[key] = i + 1
 			n.add(parent, candidate)
@@ -173,8 +172,8 @@ func (d shelfDocument) depth(parent string) int {
 	for parent != "" {
 		n++
 		f, ok := d.Folders[parent]
-		if !ok || n > 32 {
-			return 33
+		if !ok || n > shelfMaxFolderDepth {
+			return shelfMaxFolderDepth + 1
 		}
 		parent = f.Parent
 	}
@@ -185,7 +184,7 @@ func (d shelfDocument) subtreeDepth(id string) int {
 	for child := range d.Folders {
 		n := 0
 		at := child
-		for at != "" && n <= 32 {
+		for at != "" && n <= shelfMaxFolderDepth {
 			if at == id {
 				maxDepth = max(maxDepth, n)
 				break
@@ -197,27 +196,7 @@ func (d shelfDocument) subtreeDepth(id string) int {
 	return maxDepth
 }
 func (s *Server) changeShelf(expected uint64, edit func(*shelfDocument) error) (shelfDocument, error) {
-	s.blobs.mu.Lock()
-	defer s.blobs.mu.Unlock()
-	s.library.mu.Lock()
-	defer s.library.mu.Unlock()
-	e, _, err := s.library.readEnvelope()
-	if err != nil {
-		return shelfDocument{}, err
-	}
-	d := shelfOf(e)
-	if err = d.checkRevision(expected); err != nil {
-		return shelfDocument{}, err
-	}
-	if err = edit(&d); err != nil {
-		return shelfDocument{}, err
-	}
-	d.Revision++
-	e.Shelf = &d
-	if err = durableJSON(filepath.Join(s.library.dir, libraryFile), e); err != nil {
-		return shelfDocument{}, err
-	}
-	return d, nil
+	return s.changeShelfState(expected, func(tx *shelfTransaction) error { return edit(&tx.shelfDocument) })
 }
 func shelfExpected(r *http.Request) (uint64, error) {
 	value := r.Header.Get("If-Match")
@@ -234,9 +213,12 @@ func shelfExpected(r *http.Request) (uint64, error) {
 	return n, nil
 }
 func shelfAnswer(w http.ResponseWriter, status int, d shelfDocument) {
-	w.Header().Set("ETag", strconv.Quote(strconv.FormatUint(d.Revision, 10)))
-	w.Header().Set("Cache-Control", "no-store")
+	shelfRevisionHeaders(w, d.Revision)
 	writeJSON(w, status, d)
+}
+func shelfRevisionHeaders(w http.ResponseWriter, revision uint64) {
+	w.Header().Set("ETag", strconv.Quote(strconv.FormatUint(revision, 10)))
+	w.Header().Set("Cache-Control", "no-store")
 }
 func (s *Server) shelfRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/shelf", s.listShelf)
@@ -246,15 +228,21 @@ func (s *Server) shelfRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/shelf/models/{id}", func(w http.ResponseWriter, r *http.Request) { s.editShelf(w, r, false) })
 	mux.HandleFunc("DELETE /api/shelf/folders/{id}", func(w http.ResponseWriter, r *http.Request) { s.deleteShelf(w, r, true) })
 	mux.HandleFunc("DELETE /api/shelf/models/{id}", func(w http.ResponseWriter, r *http.Request) { s.deleteShelf(w, r, false) })
+	mux.HandleFunc("POST /api/shelf/trash/{token}/restore", s.restoreShelf)
 	mux.HandleFunc("GET /api/shelf/models/{id}/thumbnail.png", s.shelfThumbnail)
+	mux.HandleFunc("GET /api/shelf/models/{id}/geometry.stl", s.shelfGeometry)
 	mux.HandleFunc("POST /api/shelf/models/{id}/add-to-plate", s.addShelfModelToPlate)
 }
 func (s *Server) listShelf(w http.ResponseWriter, r *http.Request) {
-	d, err := s.shelfSnapshot()
+	e, pruned, err := s.shelfEnvelopeSnapshot(true)
 	if err != nil {
 		shelfFail(w, err)
 		return
 	}
+	if pruned {
+		go s.blobs.evict()
+	}
+	d := shelfOf(e)
 	parent := r.URL.Query().Get("folder")
 	if !d.parentExists(parent) {
 		shelfFail(w, shelfProblem(404, "folder_missing", "Shelf folder not found."))
@@ -292,7 +280,7 @@ func (s *Server) createShelfFolder(w http.ResponseWriter, r *http.Request) {
 		if !d.parentExists(in.Parent) {
 			return shelfProblem(404, "folder_missing", "Parent shelf folder not found.")
 		}
-		if d.depth(in.Parent) >= 32 {
+		if d.depth(in.Parent) >= shelfMaxFolderDepth {
 			return shelfProblem(400, "folder_depth", "Shelf folders may be at most 32 levels deep.")
 		}
 		if d.nameTaken(in.Parent, in.Name, "") {
@@ -358,7 +346,7 @@ func (s *Server) editShelf(w http.ResponseWriter, r *http.Request, folder bool) 
 				}
 				at = d.Folders[at].Parent
 			}
-			if d.depth(parent)+1+d.subtreeDepth(id) > 32 {
+			if d.depth(parent)+1+d.subtreeDepth(id) > shelfMaxFolderDepth {
 				return shelfProblem(400, "folder_depth", "Shelf folders may be at most 32 levels deep.")
 			}
 			f := d.Folders[id]
@@ -417,54 +405,28 @@ func (d shelfDocument) deletionTargets(id string, folder, recursive bool) (shelf
 	return targets, nil
 }
 
-func (s *Server) shelfDelete(id string, folder bool, expected uint64, recursive bool) (shelfDocument, error) {
-	d, err := s.changeShelf(expected, func(d *shelfDocument) error {
-		targets, err := d.deletionTargets(id, folder, recursive)
-		if err != nil {
-			return err
-		}
-		for child := range targets.Folders {
-			delete(d.Folders, child)
-		}
-		for model := range targets.Models {
-			delete(d.Models, model)
-		}
-		return nil
-	})
-	if err == nil {
-		go s.blobs.evict()
-	}
-	return d, err
-}
-func (s *Server) deleteShelf(w http.ResponseWriter, r *http.Request, folder bool) {
-	expected, err := shelfExpected(r)
-	if err != nil {
-		shelfFail(w, err)
-		return
-	}
-	recursive := r.URL.Query().Get("recursive")
-	if recursive != "" && recursive != "false" && recursive != "true" {
-		shelfFail(w, shelfProblem(400, "recursive_invalid", "recursive must be true or false."))
-		return
-	}
-	d, err := s.shelfDelete(r.PathValue("id"), folder, expected, recursive == "true")
-	if err != nil {
-		shelfFail(w, err)
-		return
-	}
-	shelfAnswer(w, 200, d)
-}
 func (s *Server) retainedShelfBlobs() (map[string]bool, error) {
-	d, err := s.shelfSnapshot()
+	e, _, err := s.shelfEnvelopeSnapshot(true)
 	if err != nil {
 		return nil, err
 	}
 	keep := map[string]bool{}
-	for _, m := range d.Models {
-		if !blobDigest.MatchString(m.SHA256) {
-			return nil, errors.New("invalid shelf digest")
+	retain := func(models map[string]shelfModel) error {
+		for _, m := range models {
+			if !blobDigest.MatchString(m.SHA256) {
+				return errors.New("invalid shelf digest")
+			}
+			keep[m.SHA256] = true
 		}
-		keep[m.SHA256] = true
+		return nil
+	}
+	if err := retain(shelfOf(e).Models); err != nil {
+		return nil, err
+	}
+	for _, tombstone := range e.ShelfTrash {
+		if err := retain(tombstone.Models); err != nil {
+			return nil, err
+		}
 	}
 	if s.workspace == nil {
 		return keep, nil

@@ -38,30 +38,40 @@ var (
 	errShelfMeshLimit = errors.New("model geometry exceeds the processing limits")
 )
 
-func readShelfMesh(ctx context.Context, cfg Config, file, format string) ([]shelfTriangle, error) {
+func openShelfMesh(file string) (*os.File, int64, error) {
 	f, err := os.Open(file)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > shelfMeshMaxBytes {
+		f.Close()
+		return nil, 0, errShelfMeshLimit
+	}
+	return f, info.Size(), nil
+}
+
+func readShelfMesh(ctx context.Context, cfg Config, file, format string) ([]shelfTriangle, error) {
+	f, size, err := openShelfMesh(file)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > shelfMeshMaxBytes {
-		return nil, errShelfMeshLimit
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	var triangles []shelfTriangle
 	switch format {
 	case ".stl":
-		triangles, err = readShelfSTL(ctx, f, info.Size())
+		triangles, err = readShelfSTL(ctx, f, size)
 	case ".obj":
 		triangles, err = readShelfOBJ(ctx, f)
 	case ".3mf":
-		triangles, err = readShelf3MF(ctx, f, info.Size())
+		triangles, err = readShelf3MF(ctx, f, size)
 	case ".step", ".stp":
 		triangles, err = readShelfSTEP(ctx, cfg, f, format)
 	default:
@@ -448,6 +458,7 @@ type shelf3MFModel struct {
 
 type shelf3MFPackage struct {
 	ctx        context.Context
+	root       string
 	entries    map[string]*zip.File
 	models     map[string]*shelf3MFModel
 	remaining  int64
@@ -575,7 +586,7 @@ func shelf3MFPart(parent, raw string) (string, error) {
 	return strings.ToLower(path.Clean(name)), nil
 }
 
-func readShelf3MF(ctx context.Context, file *os.File, size int64) ([]shelfTriangle, error) {
+func openShelf3MF(ctx context.Context, file *os.File, size int64) (*shelf3MFPackage, error) {
 	if err := shelfZIPDirectory(file, size, shelf3MFMaxParts); err != nil {
 		return nil, err
 	}
@@ -587,7 +598,7 @@ func readShelf3MF(ctx context.Context, file *os.File, size int64) ([]shelfTriang
 		return nil, errShelfMeshLimit
 	}
 	pkg := shelf3MFPackage{
-		ctx: ctx, remaining: shelf3MFMaxXML,
+		ctx: ctx, remaining: shelf3MFMaxXML, root: "/3d/3dmodel.model",
 		entries: make(map[string]*zip.File, len(archive.File)),
 		models:  make(map[string]*shelf3MFModel),
 	}
@@ -604,25 +615,36 @@ func readShelf3MF(ctx context.Context, file *os.File, size int64) ([]shelfTriang
 		}
 		pkg.entries[part] = entry
 	}
-	root := "/3d/3dmodel.model"
 	if pkg.entries["/_rels/.rels"] != nil {
 		found, err := pkg.rootPart()
 		if err != nil {
 			return nil, err
 		}
 		if found != "" {
-			root = found
+			pkg.root = found
 		}
 	}
-	model, err := pkg.load(root, true)
+	return &pkg, nil
+}
+
+func readShelf3MF(ctx context.Context, file *os.File, size int64) ([]shelfTriangle, error) {
+	pkg, err := openShelf3MF(ctx, file, size)
 	if err != nil {
 		return nil, err
 	}
+	model, err := pkg.load(pkg.root, true)
+	if err != nil {
+		return nil, err
+	}
+	return pkg.buildTriangles(model, model.build)
+}
+
+func (pkg *shelf3MFPackage) buildTriangles(model *shelf3MFModel, build []shelf3MFRef) ([]shelfTriangle, error) {
 	var out []shelfTriangle
 	active := make(map[shelf3MFObjectKey]bool)
 	visits := 0
-	for _, item := range model.build {
-		if err := pkg.appendTriangles(root, model.unit, item, modelTransform{1, 0, 0, 0, 1, 0, 0, 0, 1}, active, &visits, &out); err != nil {
+	for _, item := range build {
+		if err := pkg.appendTriangles(pkg.root, model.unit, item, modelTransform{1, 0, 0, 0, 1, 0, 0, 0, 1}, active, &visits, &out); err != nil {
 			return nil, err
 		}
 	}

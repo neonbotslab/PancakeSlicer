@@ -23,11 +23,18 @@ func TestShelfThumbnailRendersVisibleGeometry(t *testing.T) {
 		t.Fatalf("preview dimensions %s", preview.Bounds())
 	}
 	background := preview.At(0, 0)
+	if _, _, _, alpha := background.RGBA(); alpha != 0 {
+		t.Fatalf("background must be transparent, got %v", background)
+	}
 	colors := map[color.Color]int{}
 	for y := 0; y < 320; y++ {
 		for x := 0; x < 320; x++ {
 			pixel := preview.At(x, y)
 			if pixel != background {
+				r, g, b, a := pixel.RGBA()
+				if !(r > g && g > b && a == 0xffff) {
+					t.Fatalf("expected a warm neutral opaque facet, got %v", pixel)
+				}
 				if x < 20 || y < 20 || x >= 300 || y >= 300 {
 					t.Fatalf("geometry too close to the image edge at %d,%d", x, y)
 				}
@@ -59,7 +66,7 @@ func TestShelfThumbnailResolvesOcclusionRegardlessOfTriangleOrder(t *testing.T) 
 		t.Fatal(err)
 	}
 	overlap := color.RGBAModel.Convert(preview.At(147, 214))
-	if overlap != (color.RGBA{R: 137, G: 162, B: 190, A: 255}) {
+	if overlap != (color.RGBA{R: 226, G: 220, B: 211, A: 255}) {
 		t.Fatalf("nearer facet was not visible in the overlap: %v", overlap)
 	}
 }
@@ -81,5 +88,8 @@ func TestShelfThumbnailPlaceholderAndEmptyGeometry(t *testing.T) {
 	}
 	if placeholder.At(160, 160) == placeholder.At(0, 0) {
 		t.Fatal("missing preview mark is not visible in the image")
+	}
+	if _, _, _, alpha := placeholder.At(0, 0).RGBA(); alpha != 0 {
+		t.Fatal("placeholder background is opaque")
 	}
 }
