@@ -181,6 +181,7 @@ using namespace std::literals::string_view_literals;
 #include "Model.hpp"
 #include "MultiNozzleUtils.hpp"
 #include "Slicing.hpp"
+#include "ZRivets.hpp"
 
 namespace fs = boost::filesystem;
 
@@ -3360,7 +3361,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                                           Nonplanar::bottom_shells_enabled(config, object->config());
         }
     for (const PrintObject *object : print.objects())
-        m_track_nonplanar_material |= !object->conformal().patches.empty();
+        m_track_nonplanar_material |= curved_tops_mode(object->config().nonplanar_mode.value) || !object->conformal().patches.empty();
     if (print.config().nonplanar_kinematics.value != RotaryLayout::None) {
         m_writer.set_tool_kinematics(make_tool_kinematics(print.config()));
         m_writer.set_min_joint_move_time(Nonplanar::full_orientation(print.config()) ? 0. :
@@ -7526,8 +7527,15 @@ void GCode::append_full_config(const Print &print, std::string &str)
     const bool curved_tops = std::any_of(print.objects().begin(), print.objects().end(), [](const PrintObject *object) {
         return curved_tops_mode(object->config().nonplanar_mode.value);
     });
-    auto is_banned = [&cfg, curved_tops](const std::string &key) {
+    const bool z_rivets = std::any_of(print.objects().begin(), print.objects().end(), [](const PrintObject *object) {
+        for (size_t i = 0; i < object->num_printing_regions(); ++i)
+            if (object->printing_region(i).config().z_rivets.value)
+                return true;
+        return false;
+    });
+    auto is_banned = [&cfg, curved_tops, z_rivets](const std::string &key) {
         if (key.compare(0, 17, "nonplanar_curved_") == 0 && !curved_tops) return true;
+        if (key.compare(0, 7, "z_rivet") == 0 && !z_rivets) return true;
         if (key == "nonplanar_adaptive_bands")
             if (const auto *opt = cfg.option<ConfigOptionBool>(key); opt != nullptr && !opt->value)
                 return true;
@@ -8054,6 +8062,8 @@ std::string GCode::extrude_entity(const ExtrusionEntity&                     ent
         if (this->defer_planar_material(entity, description, speed, gcode))
             return gcode;
     }
+    if (const auto *plug = dynamic_cast<const ZRivetPlugPath *>(&entity))
+        return this->extrude_z_rivet_plug(*plug);
     if (const ExtrusionPath* path = dynamic_cast<const ExtrusionPath*>(&entity))
         return this->extrude_path(*path, description, speed);
     else if (const ExtrusionMultiPath* multipath = dynamic_cast<const ExtrusionMultiPath*>(&entity))
@@ -8463,18 +8473,30 @@ std::string GCode::extrude_perimeters(const Print &print, const std::vector<Obje
     return gcode;
 }
 
+std::string GCode::extrude_z_rivet_plug(const ZRivetPlugPath &plug)
+{
+    char buf[128];
+    sprintf(buf, "; Z_RIVET_PLUG volume=%.4f depth=%.3f diameter=%.3f\n", plug.mm3_per_mm * unscale<double>(plug.polyline.to_polyline().length()),
+            plug.height, plug.width);
+    return buf + this->extrude_path(plug, "z-rivet plug", 0.) + "; Z_RIVET_PLUG_END\n";
+}
+
 std::string GCode::extrude_infill(const Print &print, const std::vector<ObjectByExtruder::Island::Region> &by_region, bool ironing)
 {
     std::string                                   gcode;
     std::vector<const ExtrusionEntity*>           extrusions;
     std::vector<std::unique_ptr<ExtrusionEntity>> reversed;
     const char*                                   extrusion_name = ironing ? "ironing" : "infill";
+    std::vector<const ExtrusionEntity*>           pours;
     for (const ObjectByExtruder::Island::Region &region : by_region)
         if (! region.infills.empty()) {
             extrusions.clear();
             extrusions.reserve(region.infills.size());
+            pours.clear();
             for (const ExtrusionEntity *ee : region.infills)
-                if ((ee->role() == erIroning) == ironing &&
+                if (!ironing && is_z_rivet_pour(*ee))
+                    pours.emplace_back(ee);
+                else if ((ee->role() == erIroning) == ironing &&
                     !(curved_tops_mode(m_config.nonplanar_mode.value) && has_nonplanar_source(*ee)))
                     extrusions.emplace_back(ee);
             if (! extrusions.empty()) {
@@ -8538,6 +8560,13 @@ std::string GCode::extrude_infill(const Print &print, const std::vector<ObjectBy
                 }
                 }
                 }
+            }
+            if (!pours.empty()) {
+                m_config.apply(print.get_print_region(&region - &by_region.front()).config());
+                std::vector<std::unique_ptr<ExtrusionEntity>> unused;
+                chain_and_reorder_extrusion_entities(pours, m_last_pos.to_point(), unused);
+                for (const ExtrusionEntity *pour : pours)
+                    gcode += this->extrude_entity(*static_cast<const ExtrusionEntityCollection *>(pour)->entities.front(), extrusion_name);
             }
         }
     return gcode;
@@ -10176,11 +10205,8 @@ double GCode::nonplanar_travel_z(const Vec2d *from, const Vec2d *to, bool nozzle
 {
     double z;
     if (m_material_columns && from != nullptr && to != nullptr && nozzle_only) {
-        Nonplanar::HeadEnvelope nozzle = this->nonplanar_head();
-        nozzle.boxes.erase(std::remove_if(nozzle.boxes.begin(), nozzle.boxes.end(), [](const Nonplanar::HeadBox &b) { return !b.nozzle; }),
-                           nozzle.boxes.end());
-        z = safe_travel_z(*m_material_columns, nozzle, *from, *to,
-                          std::max(0.1, m_writer.filament() != nullptr ? m_config.z_hop.get_at(m_writer.filament()->id()) : 0.));
+        z = safe_travel_z(*m_material_columns, this->nonplanar_head(), *from, *to,
+                          std::max(0.1, m_writer.filament() != nullptr ? m_config.z_hop.get_at(m_writer.filament()->id()) : 0.), true);
     } else {
         const double hop = this->nonplanar_hop();
         z = m_material_columns && from != nullptr && to != nullptr ? safe_travel_z(*m_material_columns, this->nonplanar_head(), *from, *to, hop) :
@@ -12210,6 +12236,16 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
         if (m_force_safe_travel)
             safe = m_nonplanar_heights.travel_height(xy, m_nonplanar_clearance,
                 base + hop);
+        double col_safe = -std::numeric_limits<double>::infinity();
+        if (m_material_columns) {
+            Vec2d from_xy = m_writer.get_position().head<2>();
+            for (size_t i = 1; i < travel.size(); ++i) {
+                const Vec2d to_xy = this->point_to_gcode(travel.points[i]);
+                col_safe = std::max(col_safe, this->nonplanar_travel_z(&from_xy, &to_xy, true));
+                from_xy = to_xy;
+            }
+            safe = std::max(safe, col_safe);
+        }
         bool sloped = false;
         double lift = 0.;
         const bool short_hop = m_layer != nullptr && curved_tops_mode(m_layer->object()->config().nonplanar_mode.value) &&
@@ -12225,6 +12261,8 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
             sloped = primed_slope_lift >= 0. || 2. * lift < 2. * safe - from.z() - to.z();
             if (sloped && native_keep_primed)
                 sloped = m_nonplanar_heights.supports_travel(from + Vec3d(0., 0., lift), to + Vec3d(0., 0., lift), primed_support_gap);
+            if (sloped && m_material_columns)
+                sloped = std::min(from.z(), to.z()) + lift >= col_safe;
             if (sloped)
                 safe = from.z() + lift;
         }

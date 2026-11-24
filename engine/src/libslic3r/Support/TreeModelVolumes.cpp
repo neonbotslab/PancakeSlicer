@@ -117,6 +117,18 @@ TreeModelVolumes::TreeModelVolumes(
         std::vector<Polygons> &outlines = m_layer_outlines.front().second;
         size_t num_raft_layers = m_raft_layers.size();
         size_t num_layers = print_object.layer_count() + num_raft_layers;
+        const double z_shift = print_object.belt_global_z_offset();
+        for (size_t i = 0; i < num_layers; ++i) {
+            const Layer *layer = i >= num_raft_layers ? print_object.get_layer(i - num_raft_layers) : nullptr;
+            const double top_z = layer ? layer->print_z : m_raft_layers[i] + z_shift;
+            const double bottom_z = layer ? layer->bottom_z() : (i == 0 ? 0. : m_raft_layers[i - 1]) + z_shift;
+            Polygons neighbors = print_object.support_neighbor_footprint(bottom_z, top_z, config.xy_distance);
+            if (!neighbors.empty()) {
+                if (m_anti_overhang.size() <= i)
+                    m_anti_overhang.resize(i + 1);
+                append(m_anti_overhang[i], std::move(neighbors));
+            }
+        }
         outlines.assign(num_layers, Polygons{});
         tbb::parallel_for(tbb::blocked_range<size_t>(num_raft_layers, num_layers, std::min<size_t>(1, std::max<size_t>(16, num_layers / (8 * tbb::this_task_arena::max_concurrency())))),
             [&](const tbb::blocked_range<size_t> &range) {

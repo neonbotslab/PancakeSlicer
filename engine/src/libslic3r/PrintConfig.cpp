@@ -4551,6 +4551,24 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.4));
 
+    def           = this->add("z_rivets", coBool);
+    def->label    = L("Z rivets");
+    def->category = L("Strength");
+    def->tooltip  = L("Fill the small closed cells of the sparse infill with single pours of plastic, a few layers at a time, so each "
+                      "poured cell is solid across the layers it fills. Neighbouring cells change pour layer so the seams are staggered.");
+    def->mode     = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def           = this->add("z_rivet_span", coInt);
+    def->label    = L("Z rivet span");
+    def->category = L("Strength");
+    def->tooltip  = L("Number of layers each pour fills.");
+    def->sidetext = L("layers");
+    def->min      = 2;
+    def->max      = 20;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(16));
+
     def           = this->add("sparse_infill_rotate_template", coString);
     def->label    = L("Sparse infill rotation template");
     def->category = L("Strength");
@@ -10677,11 +10695,14 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         }
     }
     else if(opt_key == "ensure_vertical_shell_thickness") {
-        if(value == "1") {
+        if(value == "1" || value == "enabled") {
             value = "ensure_all";
         }
-        else if (value == "0"){
+        else if (value == "0" || value == "partial"){
             value = "ensure_moderate";
+        }
+        else if (value == "disabled") {
+            value = "none";
         }
     } else if (opt_key == "rotate_solid_infill_direction") {
         opt_key = "solid_infill_rotate_template";

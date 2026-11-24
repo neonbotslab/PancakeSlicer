@@ -145,6 +145,9 @@ func testHost(ctx context.Context, p *PrinterConfig, secret string) PrinterTest 
 	if p.Kind == "elegoolink" {
 		return testElegoo(ctx, p, secret)
 	}
+	if p.Kind == "repetier" {
+		return testRepetier(ctx, p, secret)
+	}
 	if p.Kind == "duet" {
 		h, base, err := httpSession(ctx, p, secret)
 		if err == nil {
@@ -198,6 +201,8 @@ func statusHTTP(ctx context.Context, h *hostSession, base *url.URL) (PrinterStat
 	switch h.printer.Kind {
 	case "moonraker":
 		return statusMoonraker(ctx, h, base)
+	case "repetier":
+		return statusRepetier(ctx, h, base)
 	case "octoprint":
 		var job struct {
 			Job struct {
@@ -294,6 +299,8 @@ func statusHTTP(ctx context.Context, h *hostSession, base *url.URL) (PrinterStat
 				st.File = job.File.Name
 			}
 		}
+	default:
+		return st, fmt.Errorf("Printer connection kind %q has no status implementation.", h.printer.Kind)
 	}
 	if st.State == "" {
 		st.State = "busy"
@@ -342,6 +349,8 @@ func controlHTTP(ctx context.Context, p *PrinterConfig, secret, action string) e
 		} else {
 			_, err = h.call(ctx, "PUT", job.JoinPath(action).String(), nil, nil)
 		}
+	default:
+		return errors.New("Pause, resume, and stop aren't supported over this connection type.")
 	}
 	return err
 }

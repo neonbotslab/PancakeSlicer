@@ -177,6 +177,8 @@
 "symmetric_infill_y_axis",
 "infill_complete_top",
 "infill_shift_step",
+"z_rivets",
+"z_rivet_span",
 "sparse_infill_rotate_template",
 "sparse_infill_density",
 "sparse_infill_pattern",

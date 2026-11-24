@@ -76,7 +76,7 @@ class NonplanarSurface
     bool check_max_printing_height(float height);
     void check_printable_surfaces(float max_angle);
     bool check_surface_area(float min_area);
-    ExPolygons horizontal_projection() const;
+    ExPolygons horizontal_projection(std::optional<double> planar_ironing_from_z = std::nullopt) const;
 
 };
 

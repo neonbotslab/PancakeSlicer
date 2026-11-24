@@ -1,14 +1,23 @@
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 
 const MAC = process.platform === 'darwin';
 const EXE = process.platform === 'win32' ? '.exe' : '';
-const DESKTOP_ORIGIN = 'http://127.0.0.1:29731';
+const DESKTOP_PORT = '29731';
+const DESKTOP_ORIGIN = `http://127.0.0.1:${DESKTOP_PORT}`;
+const ACCESS_TOKEN = randomBytes(32).toString('hex');
+const LAUNCH_MODEL = /\.(stl|obj|3mf|step|stp)$/i;
+const MAX_LAUNCH_MODEL_BYTES = 256 * 1024 * 1024;
+const launchModels = new Map<number, Map<number, string>>();
+let launchId = 0;
+const OPERATING_SYSTEM = `${process.platform} ${os.release()} ${process.arch}`;
+const DIAGNOSTIC_LOG_LINES = 200;
 
 let server: ChildProcess | null = null;
 let origin = '';
@@ -16,6 +25,7 @@ let win: BrowserWindow | null = null;
 let quitting = false;
 let quitReady = false;
 let closing = false;
+let deviceUi: { origin: string; apiOrigin: string; sockets: string[] } | null = null;
 
 const STARTING_PAGE = '<!doctype html><title>PancakeSlicer</title><body style="margin:0;height:100vh;display:flex;'
   + 'align-items:center;justify-content:center;background:#363636;color:#d0d0d0;font:15px system-ui,sans-serif;'
@@ -82,13 +92,58 @@ process.once('exit', cleanSessionDirectory);
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  queueLaunchArguments(process.argv, process.cwd());
+  app.on('second-instance', (_e, argv, cwd) => {
+    queueLaunchArguments(argv, cwd);
     if (!win) return;
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
   });
+  if (MAC) app.on('open-file', (e, file) => {
+    e.preventDefault();
+    queueLaunchArguments([file], process.cwd());
+  });
   app.whenReady().then(start).catch((e) => fail(String(e?.stack ?? e)));
+}
+
+function queueLaunchArguments(argv: readonly string[], cwd: string) {
+  const paths = argv.filter((arg) => LAUNCH_MODEL.test(arg)).map((arg) => path.resolve(cwd, arg));
+  if (!paths.length) return;
+  launchModels.set(++launchId, new Map(paths.entries()));
+  if (win && origin && !win.webContents.isDestroyed()) win.webContents.send('orca-desktop:launch-files-available');
+}
+
+async function readLaunchModels(after: number) {
+  const batch = [...launchModels].find(([id]) => id > after);
+  if (!batch) return null;
+  const [id, paths] = batch;
+  const files: { index: number; name: string; data: Buffer; lastModified: number }[] = [];
+  const errors: string[] = [];
+  let total = 0;
+  for (const [index, file] of paths) {
+    try {
+      const handle = await fs.promises.open(file, 'r');
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) throw new Error('not a regular file');
+        if (stat.size > MAX_LAUNCH_MODEL_BYTES - total)
+          throw new Error(`model files must not exceed ${MAX_LAUNCH_MODEL_BYTES / 1024 / 1024} MiB per batch`);
+        const changed = () => new Error('the file changed while it was being read');
+        const data = Buffer.alloc(stat.size);
+        for (let offset = 0; offset < data.length;) {
+          const { bytesRead } = await handle.read(data, offset, data.length - offset, offset);
+          if (!bytesRead) throw changed();
+          offset += bytesRead;
+        }
+        if ((await handle.stat()).size !== stat.size) throw changed();
+        total += data.byteLength;
+        files.push({ index, name: path.basename(file), data, lastModified: stat.mtimeMs });
+      } finally { await handle.close(); }
+    } catch (e) { errors.push(`${file}: ${e instanceof Error ? e.message : String(e)}`); }
+  }
+  if (errors.length) dialog.showErrorBox('PancakeSlicer', `Oops! Some model files couldn\'t be opened.\n${errors.join('\n')}`);
+  return { id, files };
 }
 
 
@@ -108,6 +163,7 @@ interface BundleIdentity {
   server_binary_sha256: string;
   native_manifest_sha256: string;
   native_qualification_sha256: string;
+  support_fins_sha256: string;
 
   schemas: Record<string, number>;
 }
@@ -128,6 +184,7 @@ async function bundleIdentity(web: string, engine: string): Promise<BundleIdenti
   const hashes = await Promise.all(([
     [`orca-webapp-server${EXE}`, 'server_binary_sha256'], [`nonplanar_slice_tool${EXE}`, 'native_binary_sha256'],
     ['surface-manifest.json', 'native_manifest_sha256'], ['artifact-qualification.ready', 'native_qualification_sha256'],
+    ['support-fins/support-fins.mjs', 'support_fins_sha256'],
   ] as const).map(async ([name, key]) => /^[a-f0-9]{64}$/.test(expected[key]) && await fileHash(path.join(engine, name)) === expected[key]));
   if (!hashes.every(Boolean)) throw new Error('Oops! One of the app\'s bundled files looks modified or corrupted. Try reinstalling PancakeSlicer.');
   if (!/^[a-f0-9]{64}$/.test(expected.native_resources_sha256)) throw new Error('Oops! Required app resources are missing from this installation. Try reinstalling PancakeSlicer.');
@@ -163,6 +220,38 @@ function healthy(nonce: string, expected: BundleIdentity): Promise<boolean> {
   });
 }
 
+function systemLine() {
+  const system = `${OPERATING_SYSTEM}, locale ${app.getSystemLocale()}`;
+  if (process.platform === 'win32') {
+    try {
+      const output = execFileSync('reg', ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage', '/v', 'ACP'], {
+        encoding: 'utf8', windowsHide: true,
+      });
+      return `${system}, ANSI code page ${/ACP\s+REG_SZ\s+(\d+)/.exec(output)?.[1] ?? '?'}`;
+    } catch {}
+  }
+  return system;
+}
+
+function diagnostics() {
+  const logs = path.join(app.getPath('userData'), 'logs');
+  const tail = (name: string) => {
+    try {
+      const log = fs.readFileSync(path.join(logs, name), 'utf8');
+      return log.trimEnd().split('\n').slice(-DIAGNOSTIC_LOG_LINES).join('\n');
+    } catch { return '(missing)'; }
+  };
+  const text = `PancakeSlicer v${app.getVersion()}\n${systemLine()}\n\n`
+    + `--- server.log (last ${DIAGNOSTIC_LOG_LINES} lines) ---\n${tail('server.log')}\n\n`
+    + `--- server.prev.log (last ${DIAGNOSTIC_LOG_LINES} lines) ---\n${tail('server.prev.log')}`;
+  return '```\n' + text.split(os.homedir()).join('~') + '\n```';
+}
+
+function reportProblem() {
+  const query = new URLSearchParams({ template: 'bug.yml', version: `v${app.getVersion()}`, os: OPERATING_SYSTEM });
+  void shell.openExternal(`https://github.com/ZimengXiong/PancakeSlicer/issues/new?${query}`);
+}
+
 async function startServer(): Promise<string> {
   const { web, engine } = payload();
   const expected = await bundleIdentity(web, engine);
@@ -180,6 +269,7 @@ async function startServer(): Promise<string> {
   const env = { ...process.env };
   const nonce = randomBytes(32).toString('hex');
   env.ORCA_DESKTOP_READY_NONCE = nonce;
+  env.ORCA_WEB_BEARER_TOKEN = ACCESS_TOKEN;
   delete env.ORCA_WEB_SOURCE_ARCHIVE;
   env.ORCA_WEB_SOURCE_URL = 'https://github.com/ZimengXiong/PancakeSlicer';
   delete env.ORCA_BUILD_REVISION;
@@ -191,11 +281,14 @@ async function startServer(): Promise<string> {
 
   if (fs.existsSync(surfaceManifest)) env.ORCA_WEB_SURFACE_MANIFEST = surfaceManifest;
   if (fs.existsSync(qualification)) env.ORCA_WEB_ARTIFACT_QUALIFICATION = qualification;
+  env.ORCA_WEB_SUPPORT_FINS_NODE = process.execPath;
+  env.ORCA_WEB_SUPPORT_FINS_CLI = path.join(engine, 'support-fins', 'support-fins.mjs');
+  env.ORCA_WEB_SUPPORT_FINS_ELECTRON = '1';
 
   if (process.platform === 'linux' && fs.existsSync(lib)) env.LD_LIBRARY_PATH = [lib, env.LD_LIBRARY_PATH].filter(Boolean).join(':');
   let lastError = '';
   const child = spawn(path.join(engine, `orca-webapp-server${EXE}`), [
-    '--listen', '127.0.0.1:29731',
+    '--listen', `127.0.0.1:${DESKTOP_PORT}`,
     '--static', web,
     '--tool', path.join(engine, `nonplanar_slice_tool${EXE}`),
     '--resources', path.join(engine, 'resources'),
@@ -294,8 +387,8 @@ function menu() {
     {
       role: 'help',
       submenu: [
-        { label: 'Report a problem…', click: () => void shell.openExternal('https://github.com/ZimengXiong/PancakeSlicer/issues/new?body=' +
-          encodeURIComponent(`PancakeSlicer v${app.getVersion()}, ${process.platform} ${process.arch}\n\nAttach server.log from Help > Open logs folder.`)) },
+        { label: 'Report a problem…', click: reportProblem },
+        { label: 'Copy diagnostics', click: () => clipboard.writeText(diagnostics()) },
         { label: 'Open logs folder', click: () => void shell.openPath(path.join(app.getPath('userData'), 'logs')) },
       ],
     },
@@ -307,6 +400,26 @@ function ipc() {
   ipcMain.handle('orca-desktop:bambu-connect', (e, jobId: unknown, filename: unknown) => {
     if (!origin || new URL(e.senderFrame?.url ?? 'about:blank').origin !== origin) throw new Error('not the app');
     return openInBambuConnect(jobId, filename);
+  });
+  ipcMain.handle('orca-desktop:read-launch-files', (e, after: number) => {
+    if (!origin || new URL(e.senderFrame?.url ?? 'about:blank').origin !== origin) throw new Error('not the app');
+    return readLaunchModels(after);
+  });
+  ipcMain.handle('orca-desktop:accept-launch-file', (e, id: number, index: number) => {
+    if (!origin || new URL(e.senderFrame?.url ?? 'about:blank').origin !== origin) throw new Error('not the app');
+    const files = launchModels.get(id);
+    if (files?.delete(index) && !files.size) launchModels.delete(id);
+  });
+  ipcMain.handle('orca-desktop:device-ui', (e, address: unknown, apiAddress: unknown) => {
+    if (!origin || e.sender !== win?.webContents || e.senderFrame !== e.sender.mainFrame || e.senderFrame.origin !== origin)
+      throw new Error('not the app');
+    deviceUi = null;
+    if (address === null) return;
+    const ui = deviceHttpUrl(address);
+    const api = apiAddress === undefined ? ui : deviceHttpUrl(apiAddress);
+    if (!ui || !api) throw new Error('Invalid device web UI address');
+    const socket = (url: URL) => `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}`;
+    deviceUi = { origin: ui.origin, apiOrigin: api.origin, sockets: [...new Set([socket(ui), socket(api)])] };
   });
 }
 
@@ -334,18 +447,69 @@ async function openInBambuConnect(jobId: unknown, filename: unknown) {
 }
 
 
-function restrictNetwork(target: Electron.Session) {
+function deviceHttpUrl(address: unknown) {
+  const url = typeof address === 'string' ? URL.parse(address) : null;
+  if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port === DESKTOP_PORT) return null;
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '127.0.0.1' || host.startsWith('127.')) return null;
+  // Origins are interpolated into CSP source expressions.
+  if (!/^(?:[a-z0-9.-]+|\[[0-9a-f:]+\])$/.test(url.hostname)) return null;
+  return url;
+}
+
+function hasParentFrame(details: Electron.OnBeforeRequestListenerDetails): boolean {
+  try { return !!details.frame?.parent; } catch { return true; }
+}
+
+function restrictNetwork(target: Electron.Session, appContents?: Electron.WebContents) {
   target.setSpellCheckerEnabled(false);
-  target.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+  target.webRequest.onBeforeRequest((details, callback) => {
     const url = new URL(details.url);
+    const { initiatorOrigin, resourceType, webContentsId } = details;
+    const selected = appContents && webContentsId === appContents.id ? deviceUi : null;
+    const fromPrinter = !!selected && initiatorOrigin === selected.origin;
+    // Navigation requests are attributed to their initiator, including redirects.
+    if (resourceType === 'subFrame') {
+      callback({ cancel: !selected || deviceHttpUrl(details.url)?.origin !== selected.origin
+        || (initiatorOrigin !== DESKTOP_ORIGIN && !fromPrinter) });
+      return;
+    }
+    if (fromPrinter) {
+      const http = deviceHttpUrl(details.url);
+      const allow = resourceType !== 'mainFrame' && (http?.origin === selected.origin
+        || (resourceType === 'xhr' && http?.origin === selected.apiOrigin)
+        || (resourceType === 'webSocket' && selected.sockets.includes(url.origin))
+        || url.protocol === 'data:' || (url.protocol === 'blob:' && url.origin === selected.origin));
+      callback({ cancel: !allow });
+      return;
+    }
     const local = url.origin === DESKTOP_ORIGIN;
     const update = url.protocol === 'https:' && url.hostname === 'api.github.com'
       && url.pathname === '/repos/ZimengXiong/PancakeSlicer/releases' && url.search === '?per_page=30';
     const embedded = ['blob:', 'data:', 'devtools:'].includes(url.protocol);
-    const allow = local || update || embedded;
+    const allow = (initiatorOrigin === undefined || initiatorOrigin === DESKTOP_ORIGIN)
+      && !hasParentFrame(details) && (local || update || embedded);
     if (!allow) console.error(`Blocked outbound request: ${url.origin}${url.pathname}`);
     callback({ cancel: !allow });
   });
+  if (!appContents) return;
+  target.webRequest.onHeadersReceived((details, callback) => {
+    const selected = deviceUi;
+    if (!selected || details.resourceType !== 'subFrame' || details.webContentsId !== appContents.id
+      || deviceHttpUrl(details.url)?.origin !== selected.origin) {
+      callback({});
+      return;
+    }
+    const headers = { ...details.responseHeaders };
+    const key = Object.keys(headers).find((name) => name.toLowerCase() === 'content-security-policy') ?? 'Content-Security-Policy';
+    const endpoints = [...new Set([selected.origin, selected.apiOrigin, ...selected.sockets])];
+    headers[key] = [...(headers[key] ?? []), `connect-src ${endpoints.join(' ')}; frame-src 'self'; form-action 'self'; object-src 'none'; frame-ancestors ${DESKTOP_ORIGIN} 'self'`];
+    callback({ responseHeaders: headers });
+  });
+  target.setPermissionCheckHandler((_contents, _permission, requestingOrigin, details) =>
+    details.isMainFrame && URL.parse(requestingOrigin)?.origin === DESKTOP_ORIGIN);
+  target.setPermissionRequestHandler((_contents, _permission, callback, details) =>
+    callback(details.isMainFrame && URL.parse(details.requestingUrl)?.origin === DESKTOP_ORIGIN));
 }
 
 async function start() {
@@ -355,7 +519,6 @@ async function start() {
   const serving = startServer();
   if (app.commandLine.hasSwitch('service-only')) { origin = await serving; return; }
   const rendererSession = session.fromPartition('orca-service-renderer', { cache: false });
-  restrictNetwork(rendererSession);
   if (rendererSession.isPersistent() || rendererSession.getStoragePath() !== null) throw new Error('Oops! The app window needs an isolated in-memory session to run safely.');
   win = new BrowserWindow({
     width: 1440,
@@ -376,12 +539,26 @@ async function start() {
   });
   win.on('closed', () => { win = null; });
   const contents = win.webContents;
+  restrictNetwork(rendererSession, contents);
   contents.on('console-message', (details) => {
     if (details.level === 'warning' || details.level === 'error')
       console.error(`Renderer ${details.level}: ${details.message} (${details.sourceId}:${details.lineNumber})`);
   });
 
   contents.on('will-prevent-unload', (e) => e.preventDefault());
+  const restrictFrame = (event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
+    if (!event.isMainFrame && (!deviceUi || deviceHttpUrl(event.url)?.origin !== deviceUi.origin)) event.preventDefault();
+  };
+  contents.on('will-frame-navigate', restrictFrame);
+  contents.on('will-redirect', (event) => {
+    if (event.isMainFrame && new URL(event.url).origin !== origin) event.preventDefault();
+    restrictFrame(event);
+  });
+  contents.on('did-start-navigation', (event) => {
+    if (event.isMainFrame && !event.isSameDocument) deviceUi = null;
+  });
+  contents.on('render-process-gone', () => { deviceUi = null; });
+  contents.on('destroyed', () => { deviceUi = null; });
   contents.on('will-navigate', (e, target) => {
     if (new URL(target).origin !== origin) { e.preventDefault(); shell.openExternal(target); }
   });
@@ -395,11 +572,13 @@ async function start() {
       if (!url.pathname.startsWith('/help/')) guide.on('page-title-updated', (event) => event.preventDefault());
       guide.webContents.on('will-navigate', (event, next) => { if (new URL(next).origin !== origin) event.preventDefault(); });
       void guide.loadURL(target).catch(console.error);
-    } else if (url.protocol === 'https:' && url.origin !== origin) void shell.openExternal(target);
+    } else if ((url.protocol === 'https:' || url.protocol === 'http:') && url.origin !== origin) void shell.openExternal(target);
     return { action: 'deny' };
   });
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(STARTING_PAGE)}`);
   origin = await serving;
+  await rendererSession.cookies.set({ url: DESKTOP_ORIGIN, name: 'orca_access', httpOnly: true, sameSite: 'strict',
+    value: createHmac('sha256', ACCESS_TOKEN).update('orca-web-access-v1').digest('hex') });
   if (win && !closing) await win.loadURL(origin);
 }
 

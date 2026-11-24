@@ -74,6 +74,7 @@ struct NonplanarClearanceModel;
 class CurvedTopsAccessError;
 class SupportLayer;
 class TreeSupportData;
+class SupportNeighborFootprints;
 class TreeSupport;
 class ExtrusionLayers;
 namespace MultiNozzleUtils { class NozzleGroupResultBase; class LayeredNozzleGroupResult; }
@@ -452,6 +453,7 @@ public:
     bool                        has_support()           const { return m_config.enable_support || m_config.enforce_support_layers > 0; }
     bool                        has_raft()              const { return m_config.raft_layers > 0; }
     bool                        has_support_material()  const { return this->has_support() || this->has_raft(); }
+    Polygons                    support_neighbor_footprint(coordf_t bottom_z, coordf_t top_z, coord_t gap_xy) const;
     bool                        is_mm_painted()         const { return this->model_object()->is_mm_painted(); }
     bool                        is_fuzzy_skin_painted() const { return this->model_object()->is_fuzzy_skin_painted(); }
 
@@ -514,7 +516,7 @@ private:
     void nonplanar_shells();
     bool need_z_contouring() const;
     void contour_z();
-    void generate_support_material(bool with_belt_brim = true);
+    void generate_support_material(bool with_belt_brim = true, const SupportNeighborFootprints *neighbors = nullptr);
     void generate_belt_brim();
     void estimate_curled_extrusions();
     void simplify_extrusion_path();
@@ -550,6 +552,7 @@ private:
     void tag_wave_overhang_perimeters();
     void combine_infill();
     void _generate_support_material();
+    void trim_support_paths_by_neighbors(const SupportNeighborFootprints &neighbors);
     FillAdaptive::RegionOctrees prepare_adaptive_infill_data(
         const std::vector<std::pair<const Surface*, const Layer*>>& surfaces_w_layer) const;
     FillLightning::GeneratorPtr prepare_lightning_infill_data();
@@ -578,6 +581,7 @@ private:
     };
     std::vector<BeltDroppedFill>            m_belt_dropped_fills;
     SupportLayerPtrs                        m_support_layers;
+    const SupportNeighborFootprints          *m_support_neighbors = nullptr;
     std::vector<ExtrusionEntityCollection>  m_belt_brim_by_layer;
     std::vector<ExPolygons>                 m_belt_brim_areas_by_layer;
     std::vector<BeltBrimBand>               m_belt_brim_prologue;

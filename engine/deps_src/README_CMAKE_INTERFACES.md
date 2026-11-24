@@ -15,16 +15,7 @@ target_link_libraries(your_target PRIVATE semver)
 target_link_libraries(your_target PRIVATE semver::semver)
 ```
 
-### 2. **hints** (Interface Library)
-- **Type**: Interface library (header-only)
-- **Target**: `hints`
-- **Utility**: `hintsToPot` executable
-- **Usage**:
-```cmake
-target_link_libraries(your_target PRIVATE hints)
-```
-
-### 3. **stb_dxt** (Interface Library)
+### 2. **stb_dxt** (Interface Library)
 - **Type**: Interface library (header-only)
 - **Target**: `stb_dxt` or `stb_dxt::stb_dxt`
 - **Headers**: `stb_dxt.h`
@@ -46,7 +37,6 @@ target_link_libraries(my_app
     PRIVATE
         semver::semver      # For version parsing
         stb_dxt::stb_dxt    # For DXT texture compression
-        hints               # For hints functionality
 )
 ```
 
@@ -99,5 +89,4 @@ target_include_directories(mycomponent
 
 - All header-only libraries use the INTERFACE library type, which means they don't produce any binaries
 - The `semver` library produces a static library that will be linked into your target
-- The `hints` project also produces a `hintsToPot` executable utility
 - All libraries require at least C++11 (some require C++17)

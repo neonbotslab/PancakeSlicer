@@ -34,6 +34,6 @@ export function buildLine(i: BuildInfo): string {
 }
 
 export function reportProblem() {
-  const body = `**What happened**\n\n\n**What you expected**\n\n\n**Steps or model**\n\n\n---\nPancakeSlicer v${APP_VERSION}, ${navigator.userAgent}`;
-  window.open(`${GITHUB_URL}/issues/new?body=${encodeURIComponent(body)}`, '_blank', 'noopener');
+  const query = new URLSearchParams({ template: 'bug.yml', version: `v${APP_VERSION}`, os: navigator.userAgent });
+  window.open(`${GITHUB_URL}/issues/new?${query}`, '_blank', 'noopener');
 }

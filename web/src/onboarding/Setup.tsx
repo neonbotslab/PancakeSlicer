@@ -24,8 +24,8 @@ const VENDOR_NAMES: Record<string, string> = { BBL: 'Bambu Lab' };
 const vendorName = (id: string, name = id) => VENDOR_NAMES[id] ?? name;
 
 interface PrinterModel { id: string; vendor: string; vendorName: string; model: string; cover?: string; nozzles: number[]; catalog: CatalogModel }
-interface Choices { model: PrinterModel | null; nozzles: number[]; profiles: Set<string> | null; connection: ConnectionEdit | null; filaments: Set<string> | null; products: CatalogEntry[] }
-let choices: Choices = { model: null, nozzles: [], profiles: null, connection: null, filaments: null, products: [] };
+interface Choices { model: PrinterModel | null; nozzles: number[]; profiles: Set<string> | null; connection: ConnectionEdit | null; filaments: Set<string> | null; products: CatalogEntry[]; savedFilaments: string[] }
+let choices: Choices = { model: null, nozzles: [], profiles: null, connection: null, filaments: null, products: [], savedFilaments: [] };
 
 const toModels = (vendors: CatalogVendor[]): PrinterModel[] => vendors.flatMap((v) => v.models.map((m) => ({ id: `${v.id}|${m.id}`, vendor: v.id,
   vendorName: vendorName(v.id, v.name), model: m.id, cover: m.cover, nozzles: m.nozzles.map(Number).filter((n) => n > 0), catalog: m })));
@@ -187,14 +187,30 @@ function Connect() {
   </Frame>;
 }
 
-interface FilamentRow { key: string; name: string; brand: string; material: string; product: CatalogEntry }
+type FilamentRow = { key: string; name: string; catalogName: string; brand: string; material: string }
+  & ({ product: CatalogEntry } | { savedId: string });
+const savedFilamentKey = (id: string) => `saved:${id}`;
 const baseMaterial = (m: string) => { const b = m.toUpperCase().split(/[-+ ]/)[0].replace(/\d+$/, ''); return b || m; };
+const text = (value: unknown) => String(Array.isArray(value) ? value[0] ?? '' : value ?? '');
 function Filaments({ error }: { error: string | null }) {
   const model = choices.model;
   const { data, error: readError } = useCatalog('filament', !!model);
-  const rows = useMemo<FilamentRow[]>(() => (data && 'products' in data ? data.products : [])
-    .map((p) => ({ key: p.id, name: p.id, brand: p.brand || 'Generic', material: p.type || 'Other', product: p }))
-    .sort((a, b) => a.name.localeCompare(b.name)), [data]);
+  const saved = useStore((s) => s.records.filaments);
+  const rows = useMemo<FilamentRow[]>(() => {
+    const catalog = data && 'products' in data ? data.products : [];
+    const products = new Map(catalog.map((p) => [p.id, p]));
+    const live = saved.filter((f) => !f.archived);
+    const savedProducts = new Set(live.map((f) => f.product));
+    const catalogRows = catalog.filter((p) => !savedProducts.has(p.id))
+      .map((p) => ({ key: `catalog:${p.id}`, name: p.id, catalogName: p.id, brand: p.brand || 'Generic', material: p.type || 'Other', product: p }));
+    const savedRows = live.map((f) => {
+      const product = products.get(f.product);
+      return { key: savedFilamentKey(f.id), name: f.name, catalogName: f.product, savedId: f.id,
+        brand: text(f.settings?.filament_vendor) || product?.brand || (product ? 'Generic' : 'Custom'),
+        material: text(f.settings?.filament_type) || product?.type || 'Other' };
+    });
+    return [...catalogRows, ...savedRows].sort((a, b) => a.name.localeCompare(b.name));
+  }, [data, saved]);
   const home = model ? model.vendorName.split(' ')[0] : '';
   const counted = (values: string[]) => [...values.reduce((m, v) => m.set(v, (m.get(v) ?? 0) + 1), new Map<string, number>())].map(([value, count]) => ({ value, label: value, count }));
   const brandOptions = useMemo(() => counted(rows.map((r) => r.brand)).sort((a, b) => a.label.localeCompare(b.label)), [rows]);
@@ -205,25 +221,33 @@ function Filaments({ error }: { error: string | null }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [on, setOn] = useState<Set<string> | null>(choices.filaments);
   useEffect(() => {
-    if (!rows.length || on) return;
+    if ((!data && !readError) || !rows.length || on) return;
     const b = brandOptions.find((o) => home && o.value.startsWith(home));
     if (b) setBrands([b.value]);
     setOn(new Set(['PLA', 'PETG'].map((m) => {
-      const of = (brandRows: FilamentRow[]) => brandRows.filter((r) => r.material === m).sort((x, y) => Number(/basic/i.test(y.name)) - Number(/basic/i.test(x.name)) || x.name.length - y.name.length)[0];
-      return (home && of(rows.filter((r) => r.brand.startsWith(home)))) || of(rows.filter((r) => /^generic\b/i.test(r.name)));
+      const of = (brandRows: FilamentRow[]) => brandRows.filter((r) => r.material === m)
+        .sort((x, y) => Number(/basic/i.test(y.catalogName)) - Number(/basic/i.test(x.catalogName)) || x.catalogName.length - y.catalogName.length)[0];
+      return (home && of(rows.filter((r) => r.brand.startsWith(home)))) || of(rows.filter((r) => /^generic\b/i.test(r.catalogName)));
     }).filter((r): r is FilamentRow => !!r).map((r) => r.key)));
-  }, [rows, on, brandOptions, home]);
+  }, [rows, on, brandOptions, home, data, readError]);
   const chosen = on ?? new Set<string>();
   const q = search.trim().toLowerCase();
   const shown = rows.filter((r) => (!brands.length || brands.includes(r.brand)) && (!materials.length || materials.includes(baseMaterial(r.material)))
-    && (!q || `${r.brand} ${r.name} ${r.material}`.toLowerCase().includes(q)));
+    && (!q || `${r.brand} ${r.name} ${r.material}`.toLowerCase().includes(q) || r.catalogName.toLowerCase().includes(q)));
   const picked = shown.filter((r) => chosen.has(r.key)).length;
+  const selected = rows.filter((r) => chosen.has(r.key));
   const setMany = (keys: string[], value: boolean) => setOn((s) => { const n = new Set(s); keys.forEach((k) => value ? n.add(k) : n.delete(k)); return n; });
-  const apply = () => { choices = { ...choices, filaments: chosen, products: rows.filter((r) => chosen.has(r.key))
-    .sort((a, b) => materialRank(baseMaterial(a.material)) - materialRank(baseMaterial(b.material))).map((r) => r.product) }; send({ type: 'APPLY' }); void applyChoices(); };
+  const apply = () => {
+    choices = { ...choices, filaments: new Set(selected.map((r) => r.key)),
+      products: selected.filter((r) => 'product' in r)
+        .sort((a, b) => materialRank(baseMaterial(a.material)) - materialRank(baseMaterial(b.material))).map((r) => r.product),
+      savedFilaments: selected.filter((r) => 'savedId' in r).map((r) => r.savedId) };
+    send({ type: 'APPLY' });
+    void applyChoices();
+  };
   const active = brands.length + materials.length;
   const item = (r: FilamentRow) => <label key={r.key} className="setup-check"><Check checked={chosen.has(r.key)} onCheckedChange={(v) => setMany([r.key], v)} /><span>{r.name}</span><span className="setup-n">{r.material}</span></label>;
-  return <Frame step="filaments" foot={<><Back /><span className="setup-grow" />{(error ?? readError) && <span className="setup-test bad">{error ?? readError}</span>}<span className="setup-count">{chosen.size} selected</span><Next disabled={!chosen.size} onClick={apply} /></>}>
+  return <Frame step="filaments" foot={<><Back /><span className="setup-grow" />{(error ?? readError) && <span className="setup-test bad">{error ?? readError}</span>}<span className="setup-count">{selected.length} selected</span><Next disabled={!selected.length} onClick={apply} /></>}>
     <h2>Your filaments</h2>
     <div className={`setup-filaments${filtersOpen ? ' filters-open' : ''}`}>
       <aside className="facets setup-facets" aria-label="Filters">
@@ -248,7 +272,7 @@ function Filaments({ error }: { error: string | null }) {
 
 async function applyChoices() {
   try {
-    const { model, nozzles, profiles, connection } = choices;
+    const { model, nozzles, profiles, connection, products, savedFilaments } = choices;
     const sizes = model ? nozzles.map((n) => model.catalog.nozzles.find((k) => Number(k) === n)).filter((k): k is string => !!k) : [];
     const printers = model && sizes.length ? await addCatalogPrinters(sizes.map((nozzle) => ({ vendor: model.vendor, model: model.catalog, nozzle }))) : undefined;
     const printerKey = printers?.chosen[0] ?? null;
@@ -259,8 +283,10 @@ async function applyChoices() {
       if (first) requestPreset('process', 0, first);
     }
     if (connection && printerKey) await saveConnection(printerKey, { ...connection, name: model?.model ?? 'Printer' }).catch((e) => toast('couldnt_save_connection', { detail: e instanceof Error ? e.message : e }));
-    const added = choices.products.length ? await addCatalogProducts(choices.products.map((product) => ({ product }))) : undefined;
-    const first = added?.chosen[0];
+    const added = products.length ? await addCatalogProducts(products.map((product) => ({ product }))) : undefined;
+    const selected = [...savedFilaments, ...(added?.chosen ?? [])];
+    choices = { ...choices, filaments: new Set(selected.map(savedFilamentKey)) };
+    const first = selected[0];
     if (first) requestPreset('filament', 0, first);
     send({ type: 'APPLIED' });
   } catch (e) { send({ type: 'FAILED', error: e instanceof Error ? e.message : String(e) }); }
@@ -306,7 +332,7 @@ export default function Setup() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [value]);
-  useEffect(() => { if (value === 'closed') choices = { model: null, nozzles: [], profiles: null, connection: null, filaments: null, products: [] }; }, [value]);
+  useEffect(() => { if (value === 'closed') choices = { model: null, nozzles: [], profiles: null, connection: null, filaments: null, products: [], savedFilaments: [] }; }, [value]);
   switch (value) {
     case 'closed': return null;
     case 'welcome': return <Welcome />;

@@ -3,7 +3,7 @@ import { useMachine } from '../flow/fsm';
 import { connectionEditFor, type ConnectionEditContext, type ConnectionOp } from '../flow/connection-edit';
 import { confirmDialog } from '../components/Ask';
 import { Dropdown } from '../components/Dropdown';
-import { getState, toast, useStore, type State } from '../state/store';
+import { getState, setState, toast, useStore, type State } from '../state/store';
 import { recordOf, selectionValues, useAskedValues, type ProfileValues } from '../profiles/view';
 import { loadedPrinterVendors, printerCatalog, type CatalogModel } from '../profiles/catalog-reads';
 import type { PrinterRecord } from '../profiles/records';
@@ -13,6 +13,8 @@ import {
 } from './connections';
 import { printerModel } from './capabilities';
 import './printers.css';
+import { openLibrary } from '../navigation';
+import { restoreProfile } from '../profiles/transactions';
 import { addPrinterOnVariant } from '../profiles/catalog-add';
 
 const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -38,7 +40,29 @@ function foundModel(d: Discovered): CatalogModel | undefined {
   return undefined;
 }
 
-export function ConnectionEditor({ printer, name, onSaved }: { printer: string; name: string; onSaved?(): void }) {
+type EditorProps = { printer: string; name: string; onSaved?(): void };
+
+export function ConnectionEditor(props: EditorProps) {
+  const record = useStore((s) => printerOf(s, props.printer));
+  const [restoring, setRestoring] = useState(false);
+  const [error, setError] = useState('');
+  if (!record) return <button type="button" className="btn" onClick={() => {
+    setState({ appDialog: null });
+    openLibrary('machine');
+  }}>Manage printers</button>;
+  if (record.archived) return <div className="connection-editor">
+    <button type="button" className="btn" disabled={restoring} onClick={async () => {
+      setRestoring(true); setError('');
+      try { await restoreProfile('machine', record); }
+      catch (e) { setError(errorText(e)); }
+      finally { setRestoring(false); }
+    }}>Restore {record.name}</button>
+    {error && <div role="alert" className="warning-text">{error}</div>}
+  </div>;
+  return <LiveConnectionEditor key={record.id} {...props} />;
+}
+
+function LiveConnectionEditor({ printer, name, onSaved }: EditorProps) {
   const saved = useStore((s) => connectionOf(s.printerConnections, printer));
   const status = useStore((s) => s.printerConnections.status[printer]);
   const all = useStore((s) => s.printerConnections);
@@ -51,21 +75,25 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
   const [host, setHost] = useState(saved?.host ?? '');
   const [serial, setSerial] = useState(saved?.serial ?? '');
   const [url, setUrl] = useState(saved?.url?.replace(/^http:\/\//, '') ?? '');
+  const [slug, setSlug] = useState(saved?.slug ?? '');
   const [auth, setAuth] = useState(saved?.auth === 'digest' ? 'digest' : 'apikey');
   const [user, setUser] = useState(saved?.username ?? '');
   const [secret, setSecret] = useState('');
   const [model, setModel] = useState(saved?.model ?? '');
+  const [webUi, setWebUi] = useState(saved?.web_ui ?? '');
   const m = connectionEditFor(printer), snap = useMachine(m), { test, found, error } = snap.context, working = snap.value !== 'idle';
   const sameKind = saved?.kind === kind;
-  const bambu = kind === 'bambu-lan', flashforge = kind === 'flashforge', http = !!kind && !bambu && !flashforge && kind !== 'bambu-connect';
+  const bambu = kind === 'bambu-lan', flashforge = kind === 'flashforge', repetier = kind === 'repetier', http = !!kind && !bambu && !flashforge && kind !== 'bambu-connect';
   const digest = kind === 'prusalink' && auth === 'digest';
+  const hasWebUi = !!kind && !bambu && kind !== 'bambu-connect';
   const keyOptional = kind === 'moonraker' || kind === 'duet' || kind === 'elegoolink';
   const edit = (): ConnectionEdit => ({ kind: kind!, name, model: kind === 'elegoolink' ? setupModel : model || undefined,
+    ...(hasWebUi ? { web_ui: webUi.trim() } : {}),
     ...(bambu || flashforge ? { host: host.trim(), serial: serial.trim(), access_code: secret } : {}),
-    ...(http ? { url: url.trim(), key: secret, auth: kind === 'prusalink' ? auth : undefined, username: digest ? user.trim() : undefined } : {}) });
+    ...(http ? { url: url.trim(), slug: repetier ? slug : undefined, key: secret, auth: kind === 'prusalink' ? auth : undefined, username: digest ? user.trim() : undefined } : {}) });
   const hasSecret = !!saved?.has_secret && sameKind;
   const ready = !!kind && (kind === 'bambu-connect' || (flashforge ? !!host.trim() && (!secret || !!serial.trim()) : bambu ? !!host.trim() && !!serial.trim() && (!!secret || hasSecret)
-    : !!url.trim() && (keyOptional || !!secret || hasSecret) && (!digest || !!user.trim())));
+    : !!url.trim() && (!repetier || !!slug.trim()) && (keyOptional || !!secret || hasSecret) && (!digest || !!user.trim())));
   const touched = () => m.send({ type: 'EDIT' });
   const changed = <T,>(set: (v: T) => void) => (v: T) => { set(v); touched(); };
   const identityChanged = <T,>(set: (v: T) => void) => (v: T) => { setModel(''); changed(set)(v); };
@@ -118,6 +146,10 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
         : "Bambu Connect runs locally on your computer, so direct sending requires the desktop app. In a browser, just download the .gcode.3mf file and open it in Bambu Connect."}</div>}
       {http && <>
         <label className="form-row"><span>Hostname, IP or URL</span><input className="text" value={url} placeholder={kind === 'moonraker' ? '192.168.1.70:7125' : '192.168.1.70'} spellCheck={false} onChange={(e) => identityChanged(setUrl)(e.target.value)} /></label>
+        {repetier && <>
+          <label className="form-row"><span>Printer slug</span><input className="text" value={slug} placeholder="my_printer" spellCheck={false} onChange={(e) => changed(setSlug)(e.target.value)} /></label>
+          <div className="hint-text connection-hint">Use the slug from Repetier Server’s printer list.</div>
+        </>}
         {kind === 'prusalink' && (
           <label className="form-row"><span>Authorization</span>
             <Dropdown className="combo" value={auth} onValueChange={(v) => changed(setAuth)(v)} options={[{ value: 'apikey', label: 'API key' }, { value: 'digest', label: 'HTTP digest' }]} />
@@ -129,6 +161,9 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
         </label>
         {kind === 'elegoolink' && <div className="hint-text connection-hint">Only Centauri 2 uses an access code (default 123456).</div>}
       </>}
+      {hasWebUi && <label className="form-row"><span>Device UI (optional)</span>
+        <input className="text" value={webUi} spellCheck={false} onChange={(e) => changed(setWebUi)(e.target.value)} />
+      </label>}
       {snap.value === 'testing' && <div role="status" className="hint-text">Testing…</div>}
       {test && (test.ok ? <div role="status" className="send-ok">{sentence(test.message)}</div>
         : <div role="alert" className="warning-text">{STAGE[test.stage] ? `${STAGE[test.stage]}: ` : ''}{test.message}</div>)}

@@ -1,5 +1,6 @@
 import type { PresetType } from '../api/types';
 import { type State } from '../state/store';
+import { NAME_MAX } from './records';
 import { selectCompatibility } from './compatibility';
 const recordsOf = (s: State, type: PresetType) => type === 'machine' ? s.records.printers : type === 'process' ? s.records.processes : s.records.filaments;
 
@@ -15,8 +16,14 @@ export function listProfiles(s: State, type: PresetType, filters: { browseAll?: 
   if (!filters.browseAll) cache.set(type, rows);
   return rows;
 }
-export function uniqueName(s: State, type: PresetType, desired: string): string {
-  let name = desired, n = 2;
-  while (recordsOf(s, type).some((r) => !r.archived && r.name === name)) name = `${desired} (${n++})`;
+export function availableName(taken: ReadonlySet<string>, desired: string): string {
+  let name = desired;
+  for (let n = 2; taken.has(name); n++) {
+    const suffix = ` (${n})`;
+    name = [...desired].slice(0, NAME_MAX - suffix.length).join('') + suffix;
+  }
   return name;
+}
+export function uniqueName(s: State, type: PresetType, desired: string): string {
+  return availableName(new Set(recordsOf(s, type).filter((r) => !r.archived).map((r) => r.name)), desired);
 }

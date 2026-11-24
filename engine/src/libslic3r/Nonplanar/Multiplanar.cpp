@@ -1119,7 +1119,7 @@ indexed_triangle_set route_cut_enforcers(const PrintObject &object)
     return out;
 }
 
-indexed_triangle_set slicing_frame_mesh(const PrintObject &object)
+indexed_triangle_set slicing_frame_mesh(const PrintObject &object, Transform3d *object_to_slicing_frame)
 {
     double               ground = 0.;
     indexed_triangle_set its    = object.object_frame_mesh(ground).its;
@@ -1129,6 +1129,11 @@ indexed_triangle_set slicing_frame_mesh(const PrintObject &object)
     const float shift = -(min_z + float(ground));
     for (stl_vertex &v : its.vertices)
         v.z() += shift;
+    if (object_to_slicing_frame != nullptr) {
+        *object_to_slicing_frame = object.instances().front().model_instance->get_transformation().get_matrix_no_offset();
+        const Vec2d center = unscale(object.center_offset());
+        object_to_slicing_frame->translation() = Vec3d(-center.x(), -center.y(), shift);
+    }
     return its;
 }
 

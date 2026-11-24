@@ -23,7 +23,13 @@ export default defineConfig(({ mode }) => ({
     allowedHosts: [],
     fs: { allow: [fileURLToPath(new URL('.', import.meta.url)), fileURLToPath(new URL('../server/method_capabilities.json', import.meta.url))] },
     proxy: {
-      '/api': { target: process.env.ORCA_API ?? 'http://127.0.0.1:20198', changeOrigin: true },
+      '/api': {
+        target: process.env.ORCA_API ?? 'http://127.0.0.1:20198', changeOrigin: true,
+        configure: (proxy, options) => proxy.on('proxyReq', (proxyReq, req) => {
+          const origin = req.headers.origin;
+          if (origin && URL.canParse(origin) && new URL(origin).host === req.headers.host) proxyReq.setHeader('origin', new URL(String(options.target)).origin);
+        }),
+      },
     },
   },
   build: {

@@ -49,7 +49,11 @@ declare global {
   interface Window { orcaDesktop?: { version: number;
     onBeforeClose?(handler: () => Promise<void>): () => void; flushBeforeClose?(): Promise<void>;
     onPendingSaves?(count: () => Promise<number>): () => void; pendingSaves?(): Promise<number>;
-    bambuConnect?(jobId: string, filename: string): Promise<void> } }
+    onLaunchFilesAvailable?(cb: () => void): () => void;
+    readLaunchFiles?(after: number): Promise<{ id: number; files: { index: number; name: string; data: Uint8Array<ArrayBuffer>; lastModified: number }[] } | null>;
+    acceptLaunchFile?(id: number, index: number): Promise<void>;
+    bambuConnect?(jobId: string, filename: string): Promise<void>;
+    showDeviceUi?(address: string | null, apiAddress?: string): Promise<void> } }
 }
 const storageListeners = new Set<() => void>();
 let pendingReferenceWrites = 0;

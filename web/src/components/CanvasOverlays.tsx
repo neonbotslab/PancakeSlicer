@@ -31,7 +31,7 @@ const OrientConfirm = preloadable(() => import('./OrientConfirm').then((m) => ({
 const RemapFilaments = preloadable(() => import('./RemapFilaments'));
 import { addPlate, canAddPlate } from '../plater/plates';
 import { arrangeSettings, resetArrangeSettings, setArrangeSettings, subscribeArrangeSettings } from '../plater/arrangeSettings';
-import { ANGLE, EXTRUDERS_LIMIT, GAP_AREA, HEIGHT, RADIUS, canPaint, gapFill, isPaint, paintOf, PAINT_STEP, PAINT_TOOLS, paintTool, setPaintTool, subscribePaintTool, togglePaint, type PaintKind } from '../plater/paint';
+import { ANGLE, EXTRUDERS_LIMIT, GAP_AREA, HEIGHT, LAYERS, RADIUS, canPaint, canUseLayerBrush, gapFill, isPaint, paintOf, PAINT_STEP, PAINT_TOOLS, paintTool, setPaintTool, subscribePaintTool, togglePaint, type PaintKind } from '../plater/paint';
 import { filamentColor } from '../plater/filamentColor';
 import { canEditLayers } from './LayerHeight';
 import { Num } from './Num';
@@ -531,12 +531,13 @@ export function PaintPanel() {
   const threshold = useStore((s) => object && kind === 'support' ? Number({ ...effectiveConfig(s, 'process'), ...object.settings }.support_threshold_angle) || 0 : 0);
   useEffect(() => { if (kind === 'support') setPaintTool({ highlight: threshold }); }, [kind, object?.id, threshold]);
   const filaments = useStore((s) => slotFilaments(s).map((_, i) => filamentColor(s, i + 1)).join(' ')).split(' ').filter(Boolean);
-  useEffect(() => { if (kind && !PAINT_TOOLS[kind].some(([id]) => id === paintTool().tool)) setPaintTool({ tool: 'circle' }); }, [kind, t.tool]);
+  const layerEnabled = useStore((s) => kind === 'fuzzy' && !!object && canUseLayerBrush(s, object));
+  const tools = kind ? PAINT_TOOLS[kind] : [];
+  const tool = tools.some(([id]) => id === t.tool) && (t.tool !== 'layer' || layerEnabled) ? t.tool : 'circle';
+  useEffect(() => { if (kind && t.tool !== tool) setPaintTool({ tool }); }, [kind, t.tool, tool]);
   useEffect(() => { if (t.filament > filaments.length) setPaintTool({ filament: 1 }); }, [t.filament, filaments.length]);
   if (!kind || !object) return null;
-  const tools = PAINT_TOOLS[kind];
-  const tool = tools.some(([id]) => id === t.tool) ? t.tool : 'circle';
-  const fill = tool === 'fill', gap = tool === 'gap', height = tool === 'height', triangle = tool === 'triangle';
+  const fill = tool === 'fill', gap = tool === 'gap', height = tool === 'height', layer = tool === 'layer', triangle = tool === 'triangle';
   const painted = !!paintOf(object, kind) || !!object.volumes?.some((v) => v.type === 'part' && paintOf(v, kind));
   return (
     <div className="manip-panel">
@@ -556,7 +557,8 @@ export function PaintPanel() {
         {kind === 'color' && filaments.length > 1 && <span style={{ gridColumn: '1 / -1' }}><Suspense fallback={null}><RemapFilaments object={object} colours={filaments} /></Suspense></span>}
         <span>Tool type</span>
         <span style={{ display: 'flex', gap: 2, gridColumn: 'span 2' }}>
-          {tools.map(([id, icon, title]) => <IconButton key={id} icon={icon} title={title} size={20} active={tool === id} onClick={() => setPaintTool({ tool: id })} />)}
+          {tools.map(([id, icon, title]) => <IconButton key={id} icon={icon} title={title} size={20} active={tool === id}
+            disabled={id === 'layer' && !layerEnabled} onClick={() => setPaintTool({ tool: id })} />)}
         </span>
         {gap ? (
           <>
@@ -567,7 +569,13 @@ export function PaintPanel() {
             <button className="btn" style={{ gridColumn: 'span 2', justifySelf: 'start' }} disabled={!(t.gapArea > 0) || !painted}
               onClick={() => mapPaint(object.id, kind, PAINT_STEP[kind], (x, scale) => gapFill(x.geometry, paintOf(x, kind), t.gapArea / (scale * scale)))}>Apply</button>
           </>
-        ) : triangle ? null : height ? (
+        ) : triangle ? null : layer ? (
+          <>
+            <span>Layers</span>
+            <Range min={LAYERS.min} max={LAYERS.max} step={LAYERS.step} value={t.layers} aria-label="Layers" onValueChange={(next) => setPaintTool({ layers: next })} />
+            <Num label="Layers" value={t.layers} step={LAYERS.step} onCommit={(v) => setPaintTool({ layers: v })} />
+          </>
+        ) : height ? (
           <>
             <span>Height range</span>
             <Range min={HEIGHT.min} max={HEIGHT.max} step={HEIGHT.step} value={t.height} onValueChange={(next) => setPaintTool({ height: next })} />

@@ -1,8 +1,7 @@
 name: Release engine
 
-# One target's compiled nonplanar_slice_tool: fetched from the prebuilt store, or built (with its native
-# dependencies) and published there. release.yml calls this once per target so each platform's packaging
-# can start the moment its own engine is ready.
+# Fetch or build one target's nonplanar_slice_tool and native dependencies. Pull request builds pass new
+# prebuilts as workflow artifacts. release.yml calls this once per target.
 on:
   workflow_call:
     inputs:
@@ -12,6 +11,9 @@ on:
       runner: {type: string, required: true}
       deps_from_run: {type: string, default: ''}
       deps_targets: {type: string, default: ''}
+    outputs:
+      prebuilt-artifact:
+        value: ${{ jobs.engine.outputs.prebuilt-artifact }}
 
 permissions:
   contents: write
@@ -26,7 +28,10 @@ jobs:
     name: engine ${{ inputs.target }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 240
+    outputs:
+      prebuilt-artifact: ${{ steps.upload-prebuilt.outputs.artifact-id }}
     env:
+      PREBUILT_ARTIFACT_DIR: build-native/prebuilt
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPILERCHECK: content
       CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
@@ -67,6 +72,8 @@ jobs:
         shell: pwsh
         run: |
           choco install nasm ninja ccache --no-progress -y
+          python -m pip install --quiet 'cmake<4.3'
+          python -c "import cmake; print(cmake.CMAKE_BIN_DIR)" >> $env:GITHUB_PATH
           'C:\Program Files\NASM' >> $env:GITHUB_PATH
       - name: Fetch native dependencies
         id: deps
@@ -96,7 +103,7 @@ jobs:
           else
             .github/scripts/build/deps.sh ${{ inputs.os }} ${{ inputs.arch }}
           fi
-      - name: Check and publish native dependencies
+      - name: Check and store native dependencies
         if: steps.deps.outputs.hit == 'false'
         env:
           CMAKE_APPLE_SILICON_PROCESSOR: ${{ inputs.target == 'mac-x64' && 'x86_64' || '' }}
@@ -121,23 +128,34 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .ccache
-          key: ccache-v2-${{ inputs.runner }}-${{ inputs.arch }}-${{ github.run_id }}
+          key: ccache-v2-${{ inputs.runner }}-${{ inputs.arch }}-${{ steps.keys.outputs.engine }}
           restore-keys: ccache-v2-${{ inputs.runner }}-${{ inputs.arch }}-
       - name: Build the engine
+        id: build
         if: steps.engine.outputs.hit == 'false'
         env:
           CMAKE_APPLE_SILICON_PROCESSOR: ${{ inputs.target == 'mac-x64' && 'x86_64' || '' }}
           git_commit_hash: ${{ steps.keys.outputs.source }}
         run: .github/scripts/build/engine.sh ${{ inputs.os }} ${{ inputs.arch }}
       - name: Save compiler cache
-        if: always() && steps.ccache.outcome == 'success'
+        if: steps.build.outcome == 'success' && steps.ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: .ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
-      - name: Publish the compiled engine
+      - name: Store the compiled engine
         if: steps.engine.outputs.hit == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.engine }}" build-native/tool .
+      - name: Upload new prebuilts for qualification and packaging
+        id: upload-prebuilt
+        if: github.event_name == 'pull_request' && steps.engine.outputs.hit == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: prebuilt-${{ inputs.target }}-${{ github.run_attempt }}
+          path: ${{ env.PREBUILT_ARTIFACT_DIR }}/*.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
 

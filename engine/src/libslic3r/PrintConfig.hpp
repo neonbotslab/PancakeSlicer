@@ -1343,6 +1343,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                 symmetric_infill_y_axis))
     ((ConfigOptionBool,                 infill_complete_top))
     ((ConfigOptionFloat,                infill_shift_step))
+    ((ConfigOptionBool,                 z_rivets))
+    ((ConfigOptionInt,                  z_rivet_span))
     ((ConfigOptionString,               sparse_infill_rotate_template))
     ((ConfigOptionPercent,              sparse_infill_density))
     ((ConfigOptionEnum<InfillPattern>,  sparse_infill_pattern))

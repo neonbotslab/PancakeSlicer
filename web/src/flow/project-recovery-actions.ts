@@ -10,6 +10,7 @@ import { clearPlateJobs } from '../plater/plates';
 import { IDLE_JOB, setState } from '../state/store';
 import { project, projectList, flushProject, writeProjectRoute, type ProjectDraftInventory } from './project';
 import { writeRoute } from './routes';
+import { versionShown, versionView } from './version-view';
 import { checkpointCommitted, conflictFailure, draftConflictFailure, failureError, projectFailure, TRASHED, recoveryDocument, type DraftCheckpoint, type ProjectFailure, type CheckpointDocument, RECOVERED_MESSAGE } from './project-recovery';
 export interface RecoveryRuntime {
   storage(): ProjectStore | null; removed: Set<string>;
@@ -130,7 +131,9 @@ export async function reloadProject(runtime: RecoveryRuntime) {
   }
 }
 export async function openProject(runtime: RecoveryRuntime, id: string, options: { history?: boolean; reload?: boolean } = {}) {
+  if (versionShown()) options = { ...options, reload: true };
   if (!options.reload && project.get().context.id === id && project.get().value !== 'missing' && project.get().value !== 'opening' && !project.get().context.loadError) {
+    versionView.send({ type: 'LATEST' });
     setState({ tab: 'prepare' }); if (options.history !== false) writeRoute(`/p/${id}`); return;
   }
   const mine = runtime.beginOpen();
@@ -138,7 +141,9 @@ export async function openProject(runtime: RecoveryRuntime, id: string, options:
   else { runtime.invalidateWrites(); await runtime.waitForWrites(); }
   if (!runtime.isCurrent(mine)) return;
   runtime.invalidateWrites();
-  project.send({ type: 'OPEN' }); setState({ tab: 'prepare' });
+  project.send({ type: 'OPEN' });
+  versionView.send({ type: 'LATEST' });
+  setState({ tab: 'prepare' });
   const busy = openingBusy.begin('Opening');
   if (options.history !== false) writeRoute(`/p/${encodeURIComponent(id)}`);
   try {

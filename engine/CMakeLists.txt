@@ -69,10 +69,6 @@ endif ()
 
 include("version.inc")
 include(GNUInstallDirs)
-include(CMakeDependentOption)
-
-set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
-file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   message(STATUS "No build type selected, default to Release")
@@ -96,9 +92,11 @@ else()
 endif()
 
 option(SLIC3R_STATIC            "Compile OrcaSlicer with static libraries (Boost, TBB)" ${SLIC3R_STATIC_INITIAL})
-option(SLIC3R_GUI               "Compile OrcaSlicer with GUI components (OpenGL, wxWidgets)" 1)
+option(SLIC3R_GUI               "Build the retired OrcaSlicer GUI" OFF)
+if (SLIC3R_GUI)
+    message(FATAL_ERROR "The engine is headless. Configure with SLIC3R_GUI=OFF.")
+endif ()
 option(SLIC3R_CAD               "Compile OrcaSlicer with the parametric Design/CAD tab (needs OCCT ModelingAlgorithms)" 1)
-option(SLIC3R_FHS               "Assume OrcaSlicer is to be installed in a FHS directory structure" 0)
 option(SLIC3R_PROFILE           "Compile OrcaSlicer with an invasive Shiny profiler" 0)
 option(SLIC3R_PCH               "Use precompiled headers" 1)
 option(SLIC3R_WARNINGS          "Emit compiler warnings for OrcaSlicer sources" 1)
@@ -108,113 +106,7 @@ option(SLIC3R_MSVC_PDB          "Generate PDB files on MSVC in Release mode" 1)
 option(SLIC3R_RELATIVE_DEBUG_PATHS "Record a relative compilation directory in debug info (clang-cl)" 0)
 option(SLIC3R_ASAN              "Enable ASan on Clang and GCC" 0)
 
-option(ORCA_BUILD_PYTHON_STUBGEN_MODULE "Build importable Python module for pybind11-stubgen" ON)
-set(ORCA_BUNDLED_UV_EXECUTABLE "" CACHE FILEPATH "Path to a uv executable to bundle for Python package installation. Leave empty to auto-download.")
-
-set(ORCA_UV_VERSION "0.11.21")
-set(ORCA_UV_SHA256_aarch64-apple-darwin      "1f921d491ba5ffeea774eb04d6681ecee379101341cbb1500394993b541bf3f4")
-set(ORCA_UV_SHA256_x86_64-apple-darwin       "f3c8e5708a84b920c18b691214d54d2b0da6b984789caae95d47c95120cb7765")
-set(ORCA_UV_SHA256_aarch64-unknown-linux-gnu "88e800834007cc5efd4675f166eb2a51e7e3ad19876d85fa8805a6fb5c922397")
-set(ORCA_UV_SHA256_x86_64-unknown-linux-gnu  "8c88519b0ef0af9801fcdee419bbb12116bd9e6b18e162ae093c932d8b264050")
-set(ORCA_UV_SHA256_aarch64-pc-windows-msvc   "74e443f8004022dde57a1bd0d10c097830f9ea8feb4ec927db52cd5d805c2f48")
-set(ORCA_UV_SHA256_x86_64-pc-windows-msvc    "ace861f360c6de2babedc1607d0f454b6b09a820dbc8182dc15af927e4df9589")
-
-set(ORCA_UV_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/.uv/${ORCA_UV_VERSION}")
-set(ORCA_UV_BINARY "${ORCA_UV_DOWNLOAD_DIR}/uv")
-if(WIN32)
-    set(ORCA_UV_BINARY "${ORCA_UV_DOWNLOAD_DIR}/uv.exe")
-endif()
-
-if(ORCA_BUNDLED_UV_EXECUTABLE MATCHES "/\\.uv/")
-    set(ORCA_BUNDLED_UV_EXECUTABLE "" CACHE FILEPATH "Path to the auto-downloaded uv executable" FORCE)
-endif()
-
-if(NOT ORCA_BUNDLED_UV_EXECUTABLE)
-    if(NOT EXISTS "${ORCA_UV_BINARY}")
-        set(_orca_uv_proc "${CMAKE_SYSTEM_PROCESSOR}")
-        if(APPLE AND CMAKE_OSX_ARCHITECTURES)
-            set(_orca_uv_proc "${CMAKE_OSX_ARCHITECTURES}")
-        endif()
-        set(ORCA_UV_EXT "tar.gz")
-        if(_orca_uv_proc MATCHES "x86_64|AMD64|amd64")
-            if(WIN32)
-                set(ORCA_UV_ARCH "x86_64-pc-windows-msvc")
-                set(ORCA_UV_EXT "zip")
-            elseif(APPLE)
-                set(ORCA_UV_ARCH "x86_64-apple-darwin")
-            else()
-                set(ORCA_UV_ARCH "x86_64-unknown-linux-gnu")
-            endif()
-        elseif(_orca_uv_proc MATCHES "aarch64|arm64|ARM64")
-            if(WIN32)
-                set(ORCA_UV_ARCH "aarch64-pc-windows-msvc")
-                set(ORCA_UV_EXT "zip")
-            elseif(APPLE)
-                set(ORCA_UV_ARCH "aarch64-apple-darwin")
-            else()
-                set(ORCA_UV_ARCH "aarch64-unknown-linux-gnu")
-            endif()
-        else()
-            message(WARNING "Unsupported architecture for auto-downloading uv: ${_orca_uv_proc}")
-        endif()
-
-        if(ORCA_UV_ARCH)
-            set(ORCA_UV_URL "https://github.com/astral-sh/uv/releases/download/${ORCA_UV_VERSION}/uv-${ORCA_UV_ARCH}.${ORCA_UV_EXT}")
-            set(ORCA_UV_ARCHIVE "${ORCA_UV_DOWNLOAD_DIR}/uv-archive.${ORCA_UV_EXT}")
-            file(MAKE_DIRECTORY "${ORCA_UV_DOWNLOAD_DIR}")
-            message(STATUS "Downloading uv ${ORCA_UV_VERSION} from ${ORCA_UV_URL} ...")
-            file(DOWNLOAD "${ORCA_UV_URL}" "${ORCA_UV_ARCHIVE}" STATUS ORCA_UV_DL_STATUS TLS_VERIFY ON)
-            list(GET ORCA_UV_DL_STATUS 0 ORCA_UV_DL_CODE)
-            list(GET ORCA_UV_DL_STATUS 1 ORCA_UV_DL_MSG)
-            if(NOT ORCA_UV_DL_CODE EQUAL 0)
-                message(WARNING "Failed to download uv: ${ORCA_UV_DL_MSG}")
-                file(REMOVE "${ORCA_UV_ARCHIVE}")
-            else()
-                file(SHA256 "${ORCA_UV_ARCHIVE}" _orca_uv_actual_sha256)
-                if(NOT _orca_uv_actual_sha256 STREQUAL "${ORCA_UV_SHA256_${ORCA_UV_ARCH}}")
-                    file(REMOVE "${ORCA_UV_ARCHIVE}")
-                    message(FATAL_ERROR
-                        "uv archive checksum mismatch for ${ORCA_UV_ARCH} ${ORCA_UV_VERSION}:\n"
-                        "  expected ${ORCA_UV_SHA256_${ORCA_UV_ARCH}}\n"
-                        "  actual   ${_orca_uv_actual_sha256}\n"
-                        "Possible tampering or a stale pin; refusing to bundle.")
-                endif()
-                message(STATUS "Extracting uv ...")
-                file(ARCHIVE_EXTRACT INPUT "${ORCA_UV_ARCHIVE}" DESTINATION "${ORCA_UV_DOWNLOAD_DIR}")
-                file(REMOVE "${ORCA_UV_ARCHIVE}")
-                if(NOT WIN32)
-                    file(RENAME "${ORCA_UV_DOWNLOAD_DIR}/uv-${ORCA_UV_ARCH}/uv" "${ORCA_UV_BINARY}")
-                    file(REMOVE_RECURSE "${ORCA_UV_DOWNLOAD_DIR}/uv-${ORCA_UV_ARCH}")
-                endif()
-            endif()
-        endif()
-    endif()
-
-    if(EXISTS "${ORCA_UV_BINARY}")
-        set(ORCA_BUNDLED_UV_EXECUTABLE "${ORCA_UV_BINARY}")
-    endif()
-endif()
-
-if(ORCA_BUNDLED_UV_EXECUTABLE)
-    if(EXISTS "${ORCA_BUNDLED_UV_EXECUTABLE}")
-        file(TO_CMAKE_PATH "${ORCA_BUNDLED_UV_EXECUTABLE}" ORCA_BUNDLED_UV_EXECUTABLE_CONFIG)
-        get_filename_component(ORCA_BUNDLED_UV_FILENAME "${ORCA_BUNDLED_UV_EXECUTABLE}" NAME)
-    else()
-        message(WARNING "ORCA_BUNDLED_UV_EXECUTABLE does not exist: ${ORCA_BUNDLED_UV_EXECUTABLE}")
-        set(ORCA_BUNDLED_UV_EXECUTABLE "")
-        set(ORCA_BUNDLED_UV_EXECUTABLE_CONFIG "")
-        set(ORCA_BUNDLED_UV_FILENAME "")
-    endif()
-else()
-    set(ORCA_BUNDLED_UV_EXECUTABLE_CONFIG "")
-    set(ORCA_BUNDLED_UV_FILENAME "")
-endif()
-
-CMAKE_DEPENDENT_OPTION(SLIC3R_DESKTOP_INTEGRATION "Allow performing desktop integration during runtime" 1 "NOT SLIC3R_FHS" 0)
-
 set(OPENVDB_FIND_MODULE_PATH "" CACHE PATH "Path to OpenVDB installation's find modules.")
-
-set(SLIC3R_GTK "3" CACHE STRING "GTK version to use with wxWidgets on Linux")
 
 set(IS_CROSS_COMPILE FALSE)
 
@@ -252,12 +144,8 @@ endif ()
 
 option(SLIC3R_BUILD_SANDBOXES   "Build development sandboxes" OFF)
 option(BUILD_TESTS       "Build unit tests" OFF)
+option(SLIC3R_BUILD_SLICE_TOOL "Build nonplanar_slice_tool without requiring unit tests" OFF)
 option(ORCA_TOOLS       "Build Orca tools" OFF)
-
-if (FLATPAK)
-    set(SLIC3R_FHS ON CACHE BOOL "" FORCE)
-    set(SLIC3R_DESKTOP_INTEGRATION OFF CACHE BOOL "" FORCE)
-endif ()
 
 if (IS_CROSS_COMPILE)
     message("Detected cross compilation setup. Tests and encoding checks will be forcedly disabled!")
@@ -272,16 +160,8 @@ foreach (_cache_var ${_cache_vars})
     endif ()
 endforeach()
 
-if (SLIC3R_GUI)
-    add_definitions(-DSLIC3R_GUI)
-endif ()
-
 if (SLIC3R_CAD)
     add_definitions(-DSLIC3R_CAD)
-endif ()
-
-if(SLIC3R_DESKTOP_INTEGRATION)
-    add_definitions(-DSLIC3R_DESKTOP_INTEGRATION)
 endif ()
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -425,9 +305,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)
-
-    find_package(DBus REQUIRED)
-    include_directories(SYSTEM ${DBUS_INCLUDE_DIRS})
 endif()
 
 if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUXX)
@@ -539,12 +416,9 @@ add_compile_options(/wd4305)
 endif()
 
 set(LIBDIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
-set(LIBDIR_BIN ${CMAKE_CURRENT_BINARY_DIR}/src)
 message(STATUS "LIBDIR: ${LIBDIR}")
-message(STATUS "LIBDIR_BIN: ${LIBDIR_BIN}")
 
 include_directories(SYSTEM ${LIBDIR})
-include_directories(SYSTEM ${LIBDIR_BIN}/dev-utils/platform)
 include_directories(SYSTEM ${LIBDIR}/libigl)
 
 if(WIN32)
@@ -650,35 +524,6 @@ find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
 find_package(Freetype REQUIRED)
 
-if (SLIC3R_GUI)
-    if (NOT TARGET Usrsctp::usrsctp)
-        find_library(_ORCA_USRSCTP_LIBRARY NAMES usrsctp
-            PATHS "${CMAKE_PREFIX_PATH}/lib" NO_DEFAULT_PATH)
-        if (_ORCA_USRSCTP_LIBRARY)
-            add_library(Usrsctp::usrsctp UNKNOWN IMPORTED GLOBAL)
-            set_target_properties(Usrsctp::usrsctp PROPERTIES
-                IMPORTED_LOCATION "${_ORCA_USRSCTP_LIBRARY}"
-                IMPORTED_LINK_INTERFACE_LANGUAGES C
-                INTERFACE_LINK_LIBRARIES "Threads::Threads")
-        endif()
-    endif()
-
-    if (NOT TARGET LibJuice::LibJuice)
-        find_library(_ORCA_LIBJUICE_LIBRARY NAMES juice
-            PATHS "${CMAKE_PREFIX_PATH}/lib" NO_DEFAULT_PATH)
-        if (_ORCA_LIBJUICE_LIBRARY)
-            add_library(LibJuice::LibJuice UNKNOWN IMPORTED GLOBAL)
-            set_target_properties(LibJuice::LibJuice PROPERTIES
-                IMPORTED_LOCATION "${_ORCA_LIBJUICE_LIBRARY}"
-                IMPORTED_LINK_INTERFACE_LANGUAGES C
-                INTERFACE_LINK_LIBRARIES "Threads::Threads")
-        endif()
-    endif()
-
-    find_package(LibDataChannel CONFIG REQUIRED)
-endif()
-
-
 add_library(libcurl INTERFACE)
 target_link_libraries(libcurl INTERFACE CURL::libcurl)
 
@@ -718,15 +563,6 @@ endif ()
 
 find_package(PNG REQUIRED)
 
-set(OpenGL_GL_PREFERENCE "LEGACY")
-find_package(OpenGL REQUIRED)
-
-if(APPLE AND CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
-    set(OPENGL_LIBRARIES "-framework OpenGL" CACHE STRING "OpenGL framework" FORCE)
-endif()
-
-find_package(glfw3 REQUIRED)
-
 find_package(cereal REQUIRED)
 if (NOT TARGET cereal::cereal)
     set_target_properties(cereal PROPERTIES IMPORTED_GLOBAL TRUE)
@@ -734,44 +570,6 @@ if (NOT TARGET cereal::cereal)
 else ()
     set_target_properties(cereal::cereal PROPERTIES IMPORTED_GLOBAL TRUE)
 endif ()
-
-set(L10N_DIR "${SLIC3R_RESOURCES_DIR}/i18n")
-set(BBL_L18N_DIR "${CMAKE_CURRENT_SOURCE_DIR}/localization/i18n")
-add_custom_target(gettext_make_pot
-    COMMAND xgettext --keyword=L --keyword=_L --keyword=_u8L --keyword=L_CONTEXT:1,2c --keyword=_L_CONTEXT:1,2c --keyword=_u8L_CONTEXT:1,2c --keyword=_L_PLURAL:1,2 --add-comments=TRN --from-code=UTF-8 --no-location --debug --boost
-        -f "${BBL_L18N_DIR}/list.txt"
-        -o "${BBL_L18N_DIR}/OrcaSlicer.pot"
-    COMMAND hintsToPot ${SLIC3R_RESOURCES_DIR} ${BBL_L18N_DIR}
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-    COMMENT "Generate pot file from strings in the source tree"
-)
-add_custom_target(gettext_merge_po_with_pot
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-    COMMENT "Merge localization po with new generated pot file"
-)
-file(GLOB BBL_L10N_PO_FILES "${BBL_L18N_DIR}/*/OrcaSlicer*.po")
-foreach(po_file ${BBL_L10N_PO_FILES})
-    GET_FILENAME_COMPONENT(po_dir "${po_file}" DIRECTORY)
-    SET(po_new_file "${po_dir}/OrcaSlicer_.po")
-    add_custom_command(
-        TARGET gettext_merge_po_with_pot PRE_BUILD
-        COMMAND msgmerge -N -o ${po_file} ${po_file} "${BBL_L18N_DIR}/OrcaSlicer.pot"
-    )
-endforeach()
-add_custom_target(gettext_po_to_mo
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-    COMMENT "Generate localization po files (binary) from mo files (texts)"
-)
-file(GLOB L10N_PO_FILES "${BBL_L18N_DIR}/*/OrcaSlicer*.po")
-foreach(po_file ${BBL_L10N_PO_FILES})
-    GET_FILENAME_COMPONENT(SECOND_FOLDER_ABSOLUTE ${po_file} DIRECTORY)
-    string(REGEX REPLACE ".*/(.*)" "\\1" po_dir "${SECOND_FOLDER_ABSOLUTE}" )
-    SET(mo_file "${L10N_DIR}/${po_dir}/OrcaSlicer.mo")
-    add_custom_command(
-        TARGET gettext_po_to_mo PRE_BUILD
-        COMMAND msgfmt ARGS --check-format -o ${mo_file} ${po_file}
-    )
-endforeach()
 
 find_package(NLopt 1.4 REQUIRED)
 
@@ -869,21 +667,8 @@ else ()
                    "OpenVDB installation with the OPENVDB_FIND_MODULE_PATH cache variable.")
 endif ()
 
-find_path(SPNAV_INCLUDE_DIR spnav.h)
-if (SPNAV_INCLUDE_DIR)
-    find_library(SPNAV_LIB NAMES libspnav.a spnav)
-    if (SPNAV_LIB)
-        add_definitions(-DHAVE_SPNAV)
-        message(STATUS "SPNAV library found: ${SPNAV_LIB}")
-    else()
-        message(STATUS "SPNAV library NOT found, Spacenavd not supported")
-    endif()
-else()
-    message(STATUS "SPNAV library NOT found, Spacenavd not supported")
-endif()
-
 set(TOP_LEVEL_PROJECT_DIR ${PROJECT_SOURCE_DIR})
-function(orcaslicer_copy_dlls target config postfix output_dlls)
+function(orcaslicer_copy_dlls config)
     if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64")
         set(_arch "x64")
     elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86")
@@ -895,22 +680,14 @@ function(orcaslicer_copy_dlls target config postfix output_dlls)
     endif ()
 
     get_property(_is_multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-    get_target_property(_alt_out_dir ${target} RUNTIME_OUTPUT_DIRECTORY)
-
-    if (_alt_out_dir)
-        set (_out_dir "${_alt_out_dir}")
-        message ("set out_dir to _alt_out_dir: ${_out_dir}")
-    elseif (_is_multi)
+    if (_is_multi)
         set(_out_dir "${CMAKE_CURRENT_BINARY_DIR}/${config}")
-        message ("set out_dir to CMAKE_CURRENT_BINARY_DIR/config: ${_out_dir}")
     else ()
         set(_out_dir "${CMAKE_CURRENT_BINARY_DIR}")
-        message ("set out_dir to CMAKE_CURRENT_BINARY_DIR: ${_out_dir}")
     endif ()
 
     file(COPY ${TOP_LEVEL_PROJECT_DIR}/deps/GMP/gmp/lib/win-${_arch}/libgmp-10.dll
             ${TOP_LEVEL_PROJECT_DIR}/deps/MPFR/mpfr/lib/win-${_arch}/libmpfr-4.dll
-            ${TOP_LEVEL_PROJECT_DIR}/deps/WebView2/lib/win-${_arch}/WebView2Loader.dll
         DESTINATION ${_out_dir})
 
     if (NOT OCCT_LIBS)
@@ -919,12 +696,10 @@ function(orcaslicer_copy_dlls target config postfix output_dlls)
     string(TOUPPER "${config}" _config_upper)
     set(_occt_bin "${OCCT_BIN_DIR_${_config_upper}}")
     set(_occt_dlls "")
-    set(_occt_staged "")
     set(_missing_occt "")
     foreach (_tk IN LISTS OCCT_LIBS)
         if (EXISTS "${_occt_bin}/${_tk}.dll")
             list(APPEND _occt_dlls "${_occt_bin}/${_tk}.dll")
-            list(APPEND _occt_staged "${_out_dir}/${_tk}.dll")
         else ()
             list(APPEND _missing_occt "${_tk}.dll")
         endif ()
@@ -937,78 +712,7 @@ function(orcaslicer_copy_dlls target config postfix output_dlls)
     endif ()
     file(COPY ${_occt_dlls}
             ${CMAKE_PREFIX_PATH}/bin/freetype.dll
-            ${CMAKE_PREFIX_PATH}/bin/avformat-61.dll
-            ${CMAKE_PREFIX_PATH}/bin/avcodec-61.dll
-            ${CMAKE_PREFIX_PATH}/bin/swresample-5.dll
-            ${CMAKE_PREFIX_PATH}/bin/swscale-8.dll
-            ${CMAKE_PREFIX_PATH}/bin/avutil-59.dll
          DESTINATION ${_out_dir})
-
-    set(_dll_list
-        ${_out_dir}/libgmp-10.dll
-        ${_out_dir}/libmpfr-4.dll
-        ${_out_dir}/WebView2Loader.dll
-
-        ${_out_dir}/freetype.dll
-        ${_out_dir}/avformat-61.dll
-        ${_out_dir}/avcodec-61.dll
-        ${_out_dir}/swresample-5.dll
-        ${_out_dir}/swscale-8.dll
-        ${_out_dir}/avutil-59.dll
-    )
-    list(APPEND _dll_list ${_occt_staged})
-    set(${output_dlls} ${_dll_list} PARENT_SCOPE)
-
-endfunction()
-
-function(orcaslicer_copy_sos target config postfix output_sos)
-
-    get_property(_is_multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-    get_target_property(_alt_out_dir ${target} RUNTIME_OUTPUT_DIRECTORY)
-
-    if (_alt_out_dir)
-        set(_out_dir "${_alt_out_dir}")
-    elseif (_is_multi)
-        set(_out_dir "${CMAKE_CURRENT_BINARY_DIR}/${config}")
-    else ()
-        set(_out_dir "${CMAKE_CURRENT_BINARY_DIR}")
-    endif ()
-
-    file(COPY ${CMAKE_PREFIX_PATH}/lib/libavformat.so
-            ${CMAKE_PREFIX_PATH}/lib/libavformat.so.61
-            ${CMAKE_PREFIX_PATH}/lib/libavformat.so.61.1.100
-            ${CMAKE_PREFIX_PATH}/lib/libavcodec.so
-            ${CMAKE_PREFIX_PATH}/lib/libavcodec.so.61
-            ${CMAKE_PREFIX_PATH}/lib/libavcodec.so.61.3.100
-            ${CMAKE_PREFIX_PATH}/lib/libavutil.so
-            ${CMAKE_PREFIX_PATH}/lib/libavutil.so.59
-            ${CMAKE_PREFIX_PATH}/lib/libavutil.so.59.8.100
-            ${CMAKE_PREFIX_PATH}/lib/libswscale.so
-            ${CMAKE_PREFIX_PATH}/lib/libswscale.so.8
-            ${CMAKE_PREFIX_PATH}/lib/libswscale.so.8.1.100
-            ${CMAKE_PREFIX_PATH}/lib/libswresample.so
-            ${CMAKE_PREFIX_PATH}/lib/libswresample.so.5
-            ${CMAKE_PREFIX_PATH}/lib/libswresample.so.5.1.100
-         DESTINATION ${_out_dir})
-
-    set(${output_sos}
-        ${_out_dir}/libavformat.so
-        ${_out_dir}/libavformat.so.61
-        ${_out_dir}/libavformat.so.61.1.100
-        ${_out_dir}/libavcodec.so
-        ${_out_dir}/libavcodec.so.61
-        ${_out_dir}/libavcodec.so.61.3.100
-        ${_out_dir}/libavutil.so
-        ${_out_dir}/libavutil.so.59
-        ${_out_dir}/libavutil.so.59.8.100
-        ${_out_dir}/libswscale.so
-        ${_out_dir}/libswscale.so.8
-        ${_out_dir}/libswscale.so.8.1.100
-        ${_out_dir}/libswresample.so
-        ${_out_dir}/libswresample.so.5
-        ${_out_dir}/libswresample.so.5.1.100
-        PARENT_SCOPE
-    )
 endfunction()
 
 function(orcaslicer_silence_third_party_warnings _dir)
@@ -1049,114 +753,16 @@ elseif (MSVC AND NOT IS_CLANG_CL)
 endif ()
 
 add_subdirectory(src)
-set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT OrcaSlicer_app_gui)
-
-add_dependencies(gettext_make_pot hintsToPot)
-
 if(SLIC3R_BUILD_SANDBOXES)
     add_subdirectory(sandboxes)
 endif()
 
-if(BUILD_TESTS)
+if(BUILD_TESTS OR SLIC3R_BUILD_SLICE_TOOL)
     add_subdirectory(tests)
-    if (NOT SLIC3R_BUNDLED_WARNINGS)
+    if (BUILD_TESTS AND NOT SLIC3R_BUNDLED_WARNINGS)
         orcaslicer_silence_third_party_warnings("${CMAKE_CURRENT_SOURCE_DIR}/tests/catch2")
     endif ()
 endif()
 
-if (NOT WIN32 AND NOT APPLE)
-    set(SLIC3R_APP_CMD "orca-slicer")
-    configure_file(${LIBDIR}/dev-utils/platform/unix/build_appimage.sh.in ${CMAKE_CURRENT_BINARY_DIR}/build_appimage.sh USE_SOURCE_PERMISSIONS @ONLY)
-endif()
-
-if (WIN32)
-    install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "./resources")
-    if(ORCA_BUNDLED_UV_EXECUTABLE)
-        install(PROGRAMS "${ORCA_BUNDLED_UV_EXECUTABLE}" DESTINATION "./resources/tools/uv" RENAME "${ORCA_BUNDLED_UV_FILENAME}")
-    endif()
-    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
-    include(InstallRequiredSystemLibraries)
-    set(_orca_runtime_names ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
-    list(TRANSFORM _orca_runtime_names REPLACE "^.*/" "")
-    if (MSVC AND (NOT "msvcp140.dll" IN_LIST _orca_runtime_names OR NOT "vcruntime140.dll" IN_LIST _orca_runtime_names))
-        set(_orca_runtime_error "CMake ${CMAKE_VERSION} did not find msvcp140.dll and vcruntime140.dll for MSVC ${MSVC_VERSION}. Update CMake to a release that supports this Visual Studio.")
-        message(WARNING "${_orca_runtime_error}")
-        install(CODE "message(FATAL_ERROR \"${_orca_runtime_error}\")")
-    endif ()
-    install (PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION ".")
-elseif (SLIC3R_FHS)
-    set(SLIC3R_FHS_RESOURCES "${CMAKE_INSTALL_FULL_DATAROOTDIR}/OrcaSlicer")
-    install(DIRECTORY ${SLIC3R_RESOURCES_DIR}/ DESTINATION ${SLIC3R_FHS_RESOURCES}
-        PATTERN "*/udev" EXCLUDE
-    )
-    if(ORCA_BUNDLED_UV_EXECUTABLE)
-        install(PROGRAMS "${ORCA_BUNDLED_UV_EXECUTABLE}" DESTINATION "${SLIC3R_FHS_RESOURCES}/tools/uv" RENAME "${ORCA_BUNDLED_UV_FILENAME}")
-    endif()
-    install(FILES src/dev-utils/platform/unix/com.orcaslicer.OrcaSlicer.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
-    foreach(SIZE 32 128 192)
-        install(FILES ${SLIC3R_RESOURCES_DIR}/images/OrcaSlicer_${SIZE}px.png
-            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${SIZE}x${SIZE}/apps RENAME OrcaSlicer.png
-        )
-    endforeach()
-elseif (CMAKE_MACOSX_BUNDLE)
-    if(ORCA_BUNDLED_UV_EXECUTABLE)
-        install(PROGRAMS "${ORCA_BUNDLED_UV_EXECUTABLE}" DESTINATION "${CMAKE_INSTALL_PREFIX}/OrcaSlicer.app/Contents/Resources/tools/uv" RENAME "${ORCA_BUNDLED_UV_FILENAME}")
-    endif()
-else ()
-    install(FILES src/dev-utils/platform/unix/com.orcaslicer.OrcaSlicer.desktop DESTINATION ${CMAKE_INSTALL_PREFIX}/resources/applications)
-    install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "${CMAKE_INSTALL_PREFIX}/resources")
-    if(ORCA_BUNDLED_UV_EXECUTABLE)
-        install(PROGRAMS "${ORCA_BUNDLED_UV_EXECUTABLE}" DESTINATION "${CMAKE_INSTALL_PREFIX}/resources/tools/uv" RENAME "${ORCA_BUNDLED_UV_FILENAME}")
-    endif()
-endif ()
-
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(LIBRARY_FILES
-    ${LIBDIR_BIN}/libavformat.so.61
-    ${LIBDIR_BIN}/libavformat.so.61.1.100
-    ${LIBDIR_BIN}/libavcodec.so.61
-    ${LIBDIR_BIN}/libavcodec.so.61.3.100
-    ${LIBDIR_BIN}/libavutil.so.59
-    ${LIBDIR_BIN}/libavutil.so.59.8.100
-    ${LIBDIR_BIN}/libswresample.so.5
-    ${LIBDIR_BIN}/libswresample.so.5.1.100
-    ${LIBDIR_BIN}/libswscale.so.8
-    ${LIBDIR_BIN}/libswscale.so.8.1.100
-    )
-    install(FILES ${LIBRARY_FILES} DESTINATION "${CMAKE_INSTALL_PREFIX}/bin")
-endif ()
-
-install(FILES ${CMAKE_SOURCE_DIR}/LICENSE.txt DESTINATION ".")
-configure_file(${LIBDIR}/dev-utils/platform/unix/fhs.hpp.in ${LIBDIR_BIN}/dev-utils/platform/unix/fhs.hpp)
-
-set (CPACK_PACKAGE_NAME "OrcaSlicer")
-set (CPACK_PACKAGE_VENDOR "SoftFever")
-set (CPACK_PACKAGE_VERSION_MAJOR "${ORCA_VERSION_MAJOR}")
-set (CPACK_PACKAGE_VERSION_MINOR "${ORCA_VERSION_MINOR}")
-set (CPACK_PACKAGE_VERSION_PATCH "${ORCA_VERSION_PATCH}")
-set (CPACK_PACKAGE_FILE_NAME "OrcaSlicer_Windows_Installer_V${SoftFever_VERSION}")
-if (WIN32)
-    if (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
-        string (APPEND CPACK_PACKAGE_FILE_NAME "_arm64")
-    else ()
-        string (APPEND CPACK_PACKAGE_FILE_NAME "_x64")
-    endif ()
-endif ()
-set (CPACK_PACKAGE_DESCRIPTION_SUMMARY "Orca Slicer is an open source slicer for FDM printers")
-set (CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/OrcaSlicer/OrcaSlicer")
-set (CPACK_PACKAGE_INSTALL_DIRECTORY ${CPACK_PACKAGE_NAME})
-set (CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/resources/images\\\\OrcaSlicer.ico")
-set (CPACK_NSIS_MUI_ICON "${CPACK_PACKAGE_ICON}")
-set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
-set (CPACK_NSIS_INSTALLED_ICON_NAME  "$INSTDIR\\\\orca-slicer.exe")
-set (CPACK_PACKAGE_CHECKSUM SHA256)
-set (CPACK_PACKAGE_INSTALL_REGISTRY_KEY "OrcaSlicer")
-set (CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
-set (CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
-set(CPACK_PACKAGE_EXECUTABLES "orca-slicer;OrcaSlicer")
-set(CPACK_CREATE_DESKTOP_LINKS "orca-slicer")
-set (CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE.txt)
-
-set(CPACK_WIX_UPGRADE_GUID "058245e8-20e0-4a95-9ab7-1acfe17ad511")
-set(CPACK_GENERATOR NSIS)
-include(CPack)
+install(DIRECTORY resources/ DESTINATION resources)
+install(FILES LICENSE.txt DESTINATION ".")

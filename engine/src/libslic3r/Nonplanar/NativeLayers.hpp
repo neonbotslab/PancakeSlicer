@@ -35,6 +35,8 @@ struct Params
 
 std::pair<Vec3d, Vec3d> frame(const Vec3d &n);
 
+indexed_triangle_set refine(indexed_triangle_set mesh, double max_len);
+
 std::vector<Layer> extract_layers(const indexed_triangle_set &mesh, const LayerField &field, const std::vector<double> &levels,
                                   const Params &params);
 

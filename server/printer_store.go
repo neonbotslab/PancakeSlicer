@@ -40,6 +40,8 @@ type storedPrinter struct {
 	URL         string `json:"url,omitempty"`
 	Auth        string `json:"auth,omitempty"`
 	Username    string `json:"username,omitempty"`
+	Slug        string `json:"slug,omitempty"`
+	WebUI       string `json:"web_ui,omitempty"`
 }
 
 func loadPrinterStore(dir, resources string, hosts *hostPolicy) (*printerStore, error) {
@@ -101,7 +103,7 @@ func (st *printerStore) config(sp storedPrinter) (*PrinterConfig, error) {
 		return nil, errors.New("bad id")
 	}
 	p := &PrinterConfig{Printer: sp.Printer, Name: sp.Name, Kind: sp.Kind, Host: sp.Host, Serial: sp.Serial, TLS: sp.TLS, Fingerprint: sp.Fingerprint,
-		URL: sp.URL, Auth: sp.Auth, Username: sp.Username, CredentialFile: filepath.Join(st.dir, sp.ID+".code"), id: sp.ID, hosts: st.hosts, model: sp.Model}
+		URL: sp.URL, Auth: sp.Auth, Username: sp.Username, Slug: sp.Slug, WebUI: sp.WebUI, CredentialFile: filepath.Join(st.dir, sp.ID+".code"), id: sp.ID, hosts: st.hosts, model: sp.Model}
 	if p.Kind != "bambu-lan" && p.Kind != "bambu-connect" && p.Kind != "flashforge" {
 		u, err := hostURL(sp.URL)
 		if err != nil {
@@ -114,7 +116,7 @@ func (st *printerStore) config(sp storedPrinter) (*PrinterConfig, error) {
 
 func (st *printerStore) stored(p *PrinterConfig) storedPrinter {
 	return storedPrinter{ID: p.id, Printer: p.Printer, Name: p.Name, Kind: p.Kind, Host: p.Host, Serial: p.Serial, Model: p.model, TLS: p.TLS,
-		Fingerprint: p.Fingerprint, URL: p.URL, Auth: p.Auth, Username: p.Username}
+		Fingerprint: p.Fingerprint, URL: p.URL, Auth: p.Auth, Username: p.Username, Slug: p.Slug, WebUI: p.WebUI}
 }
 
 func (st *printerStore) save() error {
@@ -186,18 +188,20 @@ func (m *SendManager) watchTrust(p *PrinterConfig) {
 }
 
 type connectionEdit struct {
-	Printer    string `json:"printer"`
-	Kind       string `json:"kind"`
-	Name       string `json:"name"`
-	Host       string `json:"host"`
-	Serial     string `json:"serial"`
-	AccessCode string `json:"access_code"`
-	Model      string `json:"model"`
-	URL        string `json:"url"`
-	Auth       string `json:"auth"`
-	Username   string `json:"username"`
-	Key        string `json:"key"`
-	ClearKey   bool   `json:"clear_key"`
+	Printer    string  `json:"printer"`
+	Kind       string  `json:"kind"`
+	Name       string  `json:"name"`
+	Host       string  `json:"host"`
+	Serial     string  `json:"serial"`
+	AccessCode string  `json:"access_code"`
+	Model      string  `json:"model"`
+	URL        string  `json:"url"`
+	Auth       string  `json:"auth"`
+	Username   string  `json:"username"`
+	Slug       string  `json:"slug"`
+	Key        string  `json:"key"`
+	ClearKey   bool    `json:"clear_key"`
+	WebUI      *string `json:"web_ui"`
 }
 
 func (b *connectionEdit) secret() string {
@@ -248,6 +252,11 @@ func (s *Server) connectionBody(w http.ResponseWriter, r *http.Request) (*connec
 func (s *Server) editConfig(ctx context.Context, body *connectionEdit, sp storedPrinter) (*PrinterConfig, error) {
 	st := s.sends.store
 	sp.Kind, sp.Name = body.Kind, body.Name
+	if body.Kind == "bambu-lan" || body.Kind == "bambu-connect" {
+		sp.WebUI = ""
+	} else if body.WebUI != nil {
+		sp.WebUI = strings.TrimSpace(*body.WebUI)
+	}
 	var u *url.URL
 	switch body.Kind {
 	case "bambu-lan":
@@ -263,6 +272,11 @@ func (s *Server) editConfig(ctx context.Context, body *connectionEdit, sp stored
 			return nil, err
 		}
 		sp.URL, sp.Auth, sp.Username = u.String(), body.Auth, body.Username
+		if body.Kind == "repetier" {
+			sp.Slug = body.Slug
+		} else {
+			sp.Slug = ""
+		}
 	}
 	p, err := st.config(sp)
 	if err != nil {
@@ -319,9 +333,16 @@ func (s *Server) putConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	m := s.sends
 	prev := m.printer(key)
-	sp := storedPrinter{Printer: key, TLS: map[bool]string{true: "tofu"}[body.Kind == "bambu-lan"], Model: body.Model}
+	model := ""
+	if body.Kind == "bambu-lan" || body.Kind == "elegoolink" {
+		model = body.Model
+	}
+	sp := storedPrinter{Printer: key, TLS: map[bool]string{true: "tofu"}[body.Kind == "bambu-lan"], Model: model}
 	if prev != nil {
 		sp.ID = prev.id
+		if prev.Kind == body.Kind {
+			sp.WebUI = prev.WebUI
+		}
 		if prev.Kind == "bambu-lan" && body.Kind == "bambu-lan" && prev.Host == body.Host && prev.Serial == body.Serial {
 			sp.TLS, sp.Fingerprint, sp.Model = prev.TLS, prev.Fingerprint, cmp.Or(body.Model, prev.model)
 		}
@@ -451,7 +472,7 @@ func (s *Server) adoptConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, next.view())
 }
 
-var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet", "flashforge": "flashforge", "elegoolink": "elegoolink"}
+var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet", "flashforge": "flashforge", "elegoolink": "elegoolink", "repetier": "repetier"}
 
 func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) {
 	m := s.sends
@@ -480,13 +501,19 @@ func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	edit := &connectionEdit{Kind: kind, Name: strings.TrimSpace(body.Name), URL: strings.TrimSpace(c["print_host"]), Key: c["printhost_apikey"]}
+	if u, err := webUIURL(c["print_host_webui"]); err == nil {
+		address := u.String()
+		edit.WebUI = &address
+	}
 	if kind == "elegoolink" {
 		// Upstream ElegooLink treats every printer outside the Centauri family as OctoPrint.
 		if edit.Model = c["printer_model"]; !strings.HasPrefix(edit.Model, "Elegoo Centauri") {
 			edit.Kind, edit.Model = "octoprint", ""
 		}
 	}
-	if kind == "flashforge" {
+	if kind == "repetier" {
+		edit.Slug = c["printhost_port"]
+	} else if kind == "flashforge" {
 		host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(edit.URL, "http://"), "https://"), "/")
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
@@ -507,7 +534,7 @@ func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 409, map[string]any{"error": "This printer already has a network connection configured.", "code": "connection_exists", "connection": p.view()})
 		return
 	}
-	sp := storedPrinter{ID: newSendID(), Printer: key}
+	sp := storedPrinter{ID: newSendID(), Printer: key, Model: edit.Model}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	p, err := s.editConfig(ctx, edit, sp)

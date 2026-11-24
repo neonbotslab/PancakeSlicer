@@ -159,12 +159,12 @@ void plan(std::vector<Block> &blocks, bool bambu, bool rrf, bool marlin2, size_t
     std::deque<double> starts; double now = 0., last = -1e9; size_t last_line = 0;
     for (Block &b : blocks) {
         if (b.rate > 0.) {
-            double arrival = std::max(last + (b.move.line == last_line ? 0. : 1. / b.rate), starts.size() == 32 ? starts.front() : -1e9);
+            double arrival = std::max(last + (b.move.line == last_line ? 0. : 1. / b.rate), starts.size() == buffer ? starts.front() : -1e9);
             double start = now;
             if (b.shell && arrival > now) { b.move.seconds += arrival - now; start = arrival; }
             else arrival = std::min(arrival, now);
             last = arrival; last_line = b.move.line;
-            starts.push_back(start); if (starts.size() > 32) starts.pop_front();
+            starts.push_back(start); if (starts.size() > buffer) starts.pop_front();
         }
         now += b.move.seconds;
     }

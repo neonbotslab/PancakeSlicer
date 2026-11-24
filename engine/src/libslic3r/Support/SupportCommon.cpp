@@ -56,6 +56,65 @@ namespace Slic3r {
 
 #define SUPPORT_SURFACES_OFFSET_PARAMETERS jtSquare, 0.
 
+SupportNeighborFootprints::SupportNeighborFootprints(const PrintObjectPtrs &objects)
+{
+    if (objects.size() < 2 && (objects.empty() || objects.front()->instances().size() < 2))
+        return;
+    if (std::none_of(objects.begin(), objects.end(), [](const PrintObject *object) {
+            return object->has_support_material() || object->auto_support() || !object->support_layers().empty();
+        }))
+        return;
+
+    for (const PrintObject *object : objects) {
+        const PrintObject *source = object->get_shared_object() ? object->get_shared_object() : object;
+        auto it = std::find_if(m_objects.begin(), m_objects.end(),
+            [source](const ObjectFootprint &entry) { return entry.source == source; });
+        if (it == m_objects.end()) {
+            ObjectFootprint &entry = m_objects.emplace_back(ObjectFootprint{source, {}, {}});
+            entry.layers.reserve(source->layer_count());
+            for (const Layer *layer : source->layers()) {
+                const ExPolygons &slices = layer->lslices_before_nonplanar.empty() ? layer->lslices : layer->lslices_before_nonplanar;
+                entry.layers.push_back({layer->bottom_z(), layer->print_z, slices});
+            }
+            it = std::prev(m_objects.end());
+        }
+        for (const PrintInstance &instance : object->instances())
+            it->shifts.push_back(instance.shift);
+    }
+}
+
+Polygons SupportNeighborFootprints::polygons(const PrintObject &object, coordf_t bottom_z, coordf_t top_z, coord_t gap_xy) const
+{
+    auto owner = std::find_if(m_objects.begin(), m_objects.end(),
+        [&object](const ObjectFootprint &entry) { return entry.source == &object; });
+    if (owner == m_objects.end())
+        return {};
+
+    Polygons result;
+    for (const ObjectFootprint &neighbor : m_objects) {
+        if (&neighbor == &*owner && neighbor.shifts.size() == 1)
+            continue;
+        auto first = std::upper_bound(neighbor.layers.begin(), neighbor.layers.end(), bottom_z + EPSILON,
+            [](coordf_t z, const LayerFootprint &layer) { return z < layer.top_z; });
+        Polygons outlines;
+        for (auto layer = first; layer != neighbor.layers.end() && layer->bottom_z < top_z - EPSILON; ++layer)
+            append(outlines, to_polygons(layer->slices));
+        if (outlines.empty())
+            continue;
+        outlines = gap_xy > 0 ? offset(union_ex(outlines), gap_xy, jtRound) : union_(outlines);
+        // Copies sharing a support toolpath need clearance at each of its placements.
+        for (const Point &shift : owner->shifts)
+            for (const Point &other_shift : neighbor.shifts) {
+                if (&neighbor == &*owner && &shift == &other_shift)
+                    continue;
+                Polygons placed = outlines;
+                translate(placed, other_shift - shift);
+                append(result, std::move(placed));
+            }
+    }
+    return result;
+}
+
 std::pair<SupportGeneratorLayersPtr, SupportGeneratorLayersPtr> generate_interface_layers(
     const PrintObjectConfig           &config,
     const SupportParameters           &support_params,

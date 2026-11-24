@@ -33,13 +33,24 @@ export function checkAllUrlFiles(checked: boolean) { update({ checked: state.fil
 const busy = () => state.phase === 'resolving' || state.phase === 'downloading' || state.phase === 'importing';
 export const urlImportBusy = busy;
 
+function uniqueFiles(files: UrlFile[]) {
+  const seen = new Set<string>();
+  return files.filter(({ key, url }) => {
+    const id = key ?? url;
+    if (!id) return true;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 async function requestFiles(url: string, signal: AbortSignal, file?: UrlFile) {
   const response = await mutation('/api/imports/url', {
     ...jsonWrite('POST', { url, ...(file ? { fileUrl: file.url, name: file.name } : {}) }), signal,
   }, false, signal, undefined, true);
   const result = await response.json() as { sourceUrl: string; files: UrlFile[] };
   if (!result?.files.length) throw new Error('Hmm, we couldn\'t find any downloadable 3D model files at that link.');
-  return result;
+  return { ...result, files: uniqueFiles(result.files) };
 }
 async function assetFile(asset: UrlFile, signal: AbortSignal, current: () => boolean): Promise<File> {
   if (!asset.key || !asset.sha256) throw new Error('Oops! The server couldn\'t save the downloaded model file.');
@@ -99,7 +110,7 @@ async function runImport(resolve: boolean) {
       files = result.files; sourceUrl = result.sourceUrl;
       if (files.length > 1) { update({ phase: 'picking', files, checked: files.map(() => true), progress: '' }); return; }
     } else files = state.files.filter((_, i) => state.checked[i]);
-    const resolved: UrlFile[] = [];
+    const downloaded: UrlFile[] = [];
     let expanded = false;
     for (const file of files) {
       if (!current()) return;
@@ -107,9 +118,10 @@ async function runImport(resolve: boolean) {
       const assets = file.key ? [file] : (await requestFiles(sourceUrl, signal, file)).files;
       if (!current()) return;
       if (assets.length > 1) expanded = true;
-      resolved.push(...assets);
+      downloaded.push(...assets);
     }
-    if (expanded) { update({ phase: 'picking', files: resolved, checked: resolved.map(() => true), progress: '' }); return; }
+    const resolved = uniqueFiles(downloaded);
+    if (expanded && resolved.length > 1) { update({ phase: 'picking', files: resolved, checked: resolved.map(() => true), progress: '' }); return; }
     const models: File[] = [];
     for (const asset of resolved) {
       const model = await amfGeometry(await assetFile(asset, signal, current));

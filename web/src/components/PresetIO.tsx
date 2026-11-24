@@ -8,9 +8,10 @@ import { Dropdown } from './Dropdown';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 import { createMachine, useMachine } from '../flow/fsm';
 import { notice, noticeText, type NoticeKind } from '../notice-codes';
+import { fileAccept } from '../file-picker';
 
 const TYPE_NAME: Record<PresetType, string> = { machine: 'Printer', filament: 'Filament', process: 'Process' };
-const ACCEPT = '.json,.zip,.bbscfg,.orca_printer,.orca_filament,.orca_bundle';
+const ACCEPT = ['json', 'zip', 'bbscfg', 'orca_printer', 'orca_filament', 'orca_bundle'].flatMap((ext) => [`.${ext}`, `.${ext.toUpperCase()}`]).join(',');
 const close = () => setState({ presetUx: null });
 
 type Row = ImportRow & { checked: boolean; result?: string; ok?: boolean;  added?: ImportRow['record']; addedNote?: string;
@@ -85,7 +86,7 @@ export function ImportDialog() {
           onDrop={(e) => { e.preventDefault(); e.stopPropagation(); setDrag(false); void read(e.dataTransfer.files); }}>
           <span>Drop .json, .zip or .orca_* files here</span>
           <button type="button" className="btn" onClick={() => input.current?.click()} disabled={busy}>Choose files…</button>
-          <input ref={input} type="file" multiple hidden accept={ACCEPT} aria-label="Profile files" onChange={(e) => { if (e.target.files) void read(e.target.files); e.target.value = ''; }} />
+          <input ref={input} type="file" multiple hidden accept={fileAccept(ACCEPT)} aria-label="Profile files" onChange={(e) => { if (e.target.files) void read(e.target.files); e.target.value = ''; }} />
         </div>
         {busy && <div role="status">{value === 'importing' ? 'Importing…' : 'Reading…'}</div>}
         {error && <p className="modal-error" role="alert">{error}</p>}
@@ -109,9 +110,9 @@ export function ImportDialog() {
                     {r.matches && r.matches.length > 0 && !done && <Dropdown className="combo" aria-label={`What ${r.name} does`} value={r.pick ?? ''}
                       options={[{ value: '', label: 'Add as new' }, ...r.matches.map((m) => ({ value: m.id, label: `Replace ${m.name}, ${editedAt(m)}, ${differ(m)}` }))]}
                       onValueChange={(pick) => setRows(rows.map((x, j) => { if (j !== i) return x; const m = x.matches?.find((y) => y.id === pick);
-                        const status = !m ? 'new' as const : m.differ === 0 && m.name === x.name ? 'unchanged' as const : 'replace' as const;
+                        const status = m ? 'replace' as const : 'new' as const;
                         const note = !m ? x.addedNote : `Replaces ${m.name} (${editedAt(m)})`;
-                        return { ...x, pick, record: m ? m.record : x.added, status, note, checked: status !== 'unchanged' }; }))}/>}
+                        return { ...x, pick, record: m ? m.record : x.added, status, note, checked: true }; }))}/>}
                     {r.notStored.length > 0 && <details className="import-not-stored"><summary>{r.notStored.length} not stored</summary><ul>{r.notStored.map((k) => <li key={k}>{k}</li>)}</ul></details>}
                   </td>
                 </tr>

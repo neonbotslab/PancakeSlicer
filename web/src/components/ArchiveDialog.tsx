@@ -4,16 +4,13 @@ import { unzipSync } from 'fflate';
 import { importFiles } from '../actions';
 import { toast } from '../state/store';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
+import { pickFiles } from '../file-picker';
 
 const modelPattern = () => new RegExp(`\\.(stl|obj|3mf|step|stp)$`, 'i');
 
 export function importZipArchive(open: (files: File[]) => void) {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.zip';
-  input.onchange = async () => {
-    const zip = input.files?.[0];
-    if (!zip) return;
+  pickFiles('.zip', async (files) => {
+    const zip = files[0];
     try {
       const pattern = modelPattern();
       const entries = unzipSync(new Uint8Array(await zip.arrayBuffer()), { filter: (f) => pattern.test(f.name) && !f.name.startsWith('__MACOSX/') });
@@ -24,8 +21,7 @@ export function importZipArchive(open: (files: File[]) => void) {
     } catch (e) {
       toast('couldnt_open_archive', { detail: e instanceof Error ? e.message : String(e) });
     }
-  };
-  input.click();
+  });
 }
 
 export default function ArchiveDialog({ files, close }: { files: (File & { path?: string })[]; close(): void }) {

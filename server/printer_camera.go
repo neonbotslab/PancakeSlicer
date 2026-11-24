@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
-	"crypto/ed25519"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -18,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -476,36 +479,51 @@ func runCamera(ctx context.Context, p *PrinterConfig, camera cameraSource, emit 
 	return httpCamera(ctx, p, camera.upstream, emit)
 }
 
+const cameraRTSPPort = 322
+
 func cameraTLS(ctx context.Context, p *PrinterConfig, port int) (net.Conn, error) {
 	u := &url.URL{Scheme: "tcp", Host: net.JoinHostPort(p.Host, strconv.Itoa(port))}
 	target, err := p.hosts.resolve(ctx, u)
 	if err != nil {
 		return nil, err
 	}
+	host := target.Addr().String()
 	config := p.tlsConfig(p.Serial)
-	if port == 322 && p.TLS == "bambu-ca" {
-		verify := config.VerifyConnection
-		config.VerifyConnection = func(cs tls.ConnectionState) error {
-			err := verify(cs)
-			var unknown x509.UnknownAuthorityError
-			if !errors.As(err, &unknown) {
-				return err
+	if port == cameraRTSPPort && p.TLS == "bambu-ca" {
+		recoverCameraIntermediates(config, func(mqttConfig *tls.Config) (*tls.Conn, error) {
+			const mqttPort = 8883
+			if slices.Contains(p.hosts.ports, mqttPort) {
+				return nil, &hostRefusal{reason: "port 8883 is this service's own"}
 			}
-			mqtt, err := dialTLS(ctx, target.Addr().String(), 8883, p.tlsConfig(p.Serial))
-			if err != nil {
-				return err
-			}
-			defer mqtt.Close()
-			cs.PeerCertificates = append(cs.PeerCertificates, mqtt.ConnectionState().PeerCertificates[1:]...)
-			return verify(cs)
-		}
+			return dialTLS(ctx, host, mqttPort, mqttConfig)
+		})
 	}
-	conn, err := dialTLS(ctx, target.Addr().String(), port, config)
+	conn, err := dialTLS(ctx, host, port, config)
 	if err != nil {
 		return nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	return &cameraConn{Conn: conn, stop: stop}, nil
+}
+
+func recoverCameraIntermediates(config *tls.Config, dialMQTT func(*tls.Config) (*tls.Conn, error)) {
+	mqttConfig := config.Clone()
+	verify := config.VerifyConnection
+	config.VerifyConnection = func(cs tls.ConnectionState) error {
+		err := verify(cs)
+		var unknown x509.UnknownAuthorityError
+		if !errors.As(err, &unknown) {
+			return err
+		}
+		// Some H2D firmware omits the intermediate on the camera port.
+		mqtt, err := dialMQTT(mqttConfig)
+		if err != nil {
+			return err
+		}
+		defer mqtt.Close()
+		cs.PeerCertificates = slices.Concat(cs.PeerCertificates, mqtt.ConnectionState().PeerCertificates[1:])
+		return verify(cs)
+	}
 }
 
 type cameraConn struct {
@@ -618,27 +636,76 @@ func httpCamera(ctx context.Context, p *PrinterConfig, typed string, emit func([
 	return ctx.Err()
 }
 
-func cameraTLSListener() (net.Listener, error) {
-	_, key, err := ed25519.GenerateKey(rand.Reader)
+func cameraTunnelTLS() (*tls.Config, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	template := &x509.Certificate{
+	now := time.Now()
+	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	der, err := x509.CreateCertificate(rand.Reader, cert, cert, key.Public(), key)
 	if err != nil {
 		return nil, err
 	}
-	return tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+	return &tls.Config{
 		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
-	})
+	}, nil
+}
+
+func relayCameraRTSP(ctx context.Context, listener net.Listener, upstream net.Conn, authority string, config *tls.Config) {
+	defer upstream.Close()
+	stop := context.AfterFunc(ctx, func() { listener.Close() })
+	defer stop()
+	local, err := listener.Accept()
+	if err != nil {
+		return
+	}
+	listener.Close()
+	defer local.Close()
+	stopLocal := context.AfterFunc(ctx, func() { local.Close() })
+	defer stopLocal()
+	local.SetDeadline(time.Now().Add(15 * time.Second))
+
+	reader := bufio.NewReader(io.LimitReader(local, 16<<10))
+	request, err := http.ReadRequest(reader)
+	if err != nil || request.Method != http.MethodConnect || !strings.EqualFold(request.RequestURI, authority) ||
+		request.ContentLength != 0 || len(request.TransferEncoding) != 0 || reader.Buffered() != 0 {
+		return
+	}
+	if _, err := io.WriteString(local, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		return
+	}
+	tunnel := tls.Server(local, config)
+	if err := tunnel.HandshakeContext(ctx); err != nil {
+		return
+	}
+	local.SetDeadline(time.Time{})
+	go func() {
+		io.Copy(upstream, tunnel)
+		upstream.Close()
+	}()
+	io.Copy(tunnel, upstream)
+}
+
+func cameraRTSPCommand(ctx context.Context, executable string, target url.URL, proxyAddr string) *exec.Cmd {
+	args := []string{"-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-analyzeduration", "500000", "-probesize", "32768", "-timeout", "15000000"}
+	// Older demuxers rely on the TLS protocol's default and don't expose this option.
+	if help, err := exec.CommandContext(ctx, executable, "-hide_banner", "-h", "demuxer=rtsp").Output(); err == nil && bytes.Contains(help, []byte("-tls_verify ")) {
+		args = append(args, "-tls_verify", "0")
+	}
+	args = append(args, "-i", target.String(), "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-flush_packets", "1", "-f", "mp4", "pipe:1")
+	cmd := exec.CommandContext(ctx, executable, args...)
+	// FFmpeg's RTSPS transport uses CONNECT. Keeping the printer URI in FFmpeg
+	// lets it sign the same target that reaches the printer. Go verifies upstream TLS.
+	cmd.Env = append(cmd.Environ(), "http_proxy=http://"+proxyAddr, "no_proxy=")
+	return cmd
 }
 
 func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func([]byte, bool)) error {
@@ -646,30 +713,23 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 	if err != nil {
 		return errors.New("Streaming RTSPS camera video requires ffmpeg to be installed on the server.")
 	}
-	conn, err := cameraTLS(ctx, p, 322)
+	conn, err := cameraTLS(ctx, p, cameraRTSPPort)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	listener, err := cameraTLSListener()
+	config, err := cameraTunnelTLS()
+	if err != nil {
+		return err
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	stop := context.AfterFunc(ctx, func() { listener.Close() })
-	defer stop()
-	go func() {
-		local, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer local.Close()
-		listener.Close()
-		go func() { io.Copy(conn, local); conn.Close() }()
-		io.Copy(local, conn)
-	}()
-	target := url.URL{Scheme: "rtsps", Host: listener.Addr().String(), User: url.UserPassword("bblp", secret), Path: "/streaming/live/1"}
-	cmd := exec.CommandContext(ctx, executable, "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-analyzeduration", "500000", "-probesize", "32768", "-timeout", "15000000", "-i", target.String(), "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-flush_packets", "1", "-f", "mp4", "pipe:1")
+	target := url.URL{Scheme: "rtsps", Host: net.JoinHostPort(p.Host, strconv.Itoa(cameraRTSPPort)), User: url.UserPassword(bambuUser, secret), Path: "/streaming/live/1"}
+	go relayCameraRTSP(ctx, listener, conn, target.Host, config)
+	cmd := cameraRTSPCommand(ctx, executable, target, listener.Addr().String())
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@
 #include "libslic3r.h"
 #include <math.h>
 #include <memory>
+#include "ConformalTravel.hpp"
 #include "GCodeProcessor.hpp"
 #include "ToolKinematics.hpp"
 #include "libslic3r/BoundingBox.hpp"
@@ -1282,10 +1283,16 @@ double MaterialColumns::tilted_clearance(const Vec3d &tip, const Matrix3d &frame
     return best;
 }
 
-double safe_travel_z(const MaterialColumns &columns, const Nonplanar::HeadEnvelope &head, const Vec2d &a, const Vec2d &b, double hop)
+double safe_travel_z(const MaterialColumns &columns, const Nonplanar::HeadEnvelope &head, const Vec2d &a, const Vec2d &b, double hop, bool nozzle_only)
 {
     auto travel_head = head;
     for (auto &box : travel_head.boxes) box.nozzle = is_nozzle(box, head);
+    if (nozzle_only) {
+        travel_head.boxes.erase(std::remove_if(travel_head.boxes.begin(), travel_head.boxes.end(),
+            [](const Nonplanar::HeadBox &box) { return !box.nozzle; }), travel_head.boxes.end());
+        if (travel_head.boxes.empty())
+            travel_head = Nonplanar::nozzle_land(head);
+    }
     travel_head.tip_allowance = {};
     const double gap = columns.swept_clearance(Vec3d(a.x(), a.y(), 0.), Vec3d(b.x(), b.y(), 0.), travel_head);
     return -gap + std::max(0., hop);

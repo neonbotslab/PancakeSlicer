@@ -7,6 +7,7 @@ import { bakeStl, bedBounds, nextFreeSpot } from './geometry';
 import { meshJob } from './meshOps';
 import { placeVolume } from './volumes';
 import { inFrame, surfaceFields } from './text';
+import { pickFiles } from '../file-picker';
 
 const NEW = { depth: 2, size: 30 };
 
@@ -18,13 +19,7 @@ const warn = (record: Record<string, unknown>, name: string) => {
 };
 
 function pick(): Promise<File | null> {
-  return new Promise((resolve) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.svg,image/svg+xml';
-    input.onchange = () => resolve(input.files?.[0] ?? null);
-    input.click();
-  });
+  return new Promise((resolve) => pickFiles('.svg,image/svg+xml', (files) => resolve(files[0])));
 }
 
 let busy = false;

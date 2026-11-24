@@ -1259,7 +1259,7 @@ FieldOrder band_order_roads(std::vector<FieldRoad> &roads, size_t layers, double
         constexpr double SimplifyTolerance = 0.01;
         for (ExtrusionEntity *e : group.entities)
             static_cast<ExtrusionPathConformal *>(e)->simplify(SimplifyTolerance);
-        link_roads(group.entities, domains != nullptr && key.second + 1 < domains->size() ? &(*domains)[key.second + 1] : nullptr);
+        link_roads(group.entities, domains != nullptr && key.second < domains->size() ? &(*domains)[key.second] : nullptr);
         out.groups.push_back(std::move(group));
         out.group_layers.push_back(key.second);
     }

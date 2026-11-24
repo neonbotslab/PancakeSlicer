@@ -104,9 +104,9 @@ export async function viewVersion(v: ProjectVersion) {
   }
 }
 export async function backToLatest() {
-  const id = state.projectId, shown = versionShown();
-  versionView.send({ type: 'LATEST' });
-  if (id && shown) await leaveProjectVersion(id);
+  const id = state.projectId;
+  if (id && versionShown()) await leaveProjectVersion(id);
+  else versionView.send({ type: 'LATEST' });
 }
 export async function restoreVersion() {
   const v = versionShown(), id = state.projectId;

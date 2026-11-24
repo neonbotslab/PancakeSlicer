@@ -15,6 +15,7 @@ import type { ProfileDraft } from './ProfileEditor';
 import { configureLibraryWrites, knowLibrary, libraryWritesPending, LibraryWriteError, submitLibraryWrite,
   type EntityKey, type LibraryChange, type LibraryWriteIntent } from './library-writes';
 import { getRecord, recordKey, sameRecord, setRecord, type AnyRecord, type FilamentRecord, type LibraryRecords, type PrinterRecord, type ProcessRecord, type RecordKind } from './records';
+import { uniqueName } from './catalog';
 import { randomId } from '../random-id';
 
 const conflict=(message:string)=>new LibraryWriteError(message,'revision_conflict');
@@ -192,6 +193,13 @@ export function copyRecord(kind:NamedKind,id:string,name:string):ProfileCreation
       out.push({kind:'calibration',record:{...c,id:`calibration:${randomId()}`,...(kind==='printer'?{printer:copyId}:{filament:copyId}),revision:0}});
     return out;
   },'Duplicate');
+}
+
+export async function restoreProfile(type: PresetType, record: Named): Promise<string> {
+  const name = uniqueName(getState(), type, record.name);
+  const { archived, ...rest } = record;
+  await commitRecords([{ kind: kindOf(type), record: { ...rest, name }, base: record }], { label: 'Restore' });
+  return name;
 }
 
 export interface RecordRemoval {kind:NamedKind;ids:string[];operationId:string;slots:{printer:string;slot:string;filament:string}[]}

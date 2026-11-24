@@ -210,6 +210,7 @@ public:
     coordf_t m_radius_sample_resolution;
 
     std::vector<ExPolygons> m_layer_outlines;
+    std::vector<ExPolygons> m_neighbor_outlines;
 
     std::vector<ExPolygons> m_layer_outlines_below;
 

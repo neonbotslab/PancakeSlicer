@@ -88,6 +88,7 @@
 #include "GCode/WipeTowerEstimate.hpp"
 #include "Utils.hpp"
 #include "HeapTrim.hpp"
+#include "Support/SupportCommon.hpp"
 #include "PrintConfig.hpp"
 #include "MaterialType.hpp"
 #include "Model.hpp"
@@ -552,6 +553,16 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & , co
         for (PrintObject *object : m_objects)
             if (Nonplanar::deform_slice_considered(*object))
                 invalidated |= object->invalidate_step(posPerimeters);
+    if (std::any_of(opt_keys.begin(), opt_keys.end(), [](const t_config_option_key &key) {
+            return key == "nonplanar_collision_check" || key == "nonplanar_repair_iterations"; }))
+        for (PrintObject *object : m_objects)
+            if (object->m_nonplanar_repair || !object->m_curved_planar_surfaces.empty() || object->m_curved_fallback_off ||
+                object->m_curved_fallback_zaa) {
+                object->m_nonplanar_repair.reset();
+                object->m_curved_planar_surfaces.clear();
+                object->m_curved_fallback_off = object->m_curved_fallback_zaa = false;
+                invalidated |= object->invalidate_step(posSlice);
+            }
 
     return invalidated;
 }
@@ -3042,12 +3053,13 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
             for (size_t i = 0; i < m_objects.size(); ++i)
                 sup_was_done[i] = m_objects[i]->is_step_done(posSupportMaterial) ? 1 : 0;
 
+        const SupportNeighborFootprints support_neighbors(m_objects);
         tbb::parallel_for(tbb::blocked_range<int>(0, int(m_objects.size())),
-            [this, need_slicing_objects](const tbb::blocked_range<int>& range) {
+            [this, &support_neighbors, need_slicing_objects](const tbb::blocked_range<int>& range) {
                 for (int i = range.begin(); i < range.end(); i++) {
                     PrintObject* obj = m_objects[i];
                     if (need_slicing_objects.count(obj) != 0) {
-                        obj->generate_support_material(false);
+                        obj->generate_support_material(false, &support_neighbors);
                     }
                     else {
                         if (obj->set_started(posSupportMaterial))
@@ -3084,7 +3096,8 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
                     obj->contour_z();
                 else if (obj->set_started(posContouring))
                     obj->set_done(posContouring);
-                obj->generate_support_material(false);
+                const SupportNeighborFootprints updated_neighbors(m_objects);
+                obj->generate_support_material(false, &updated_neighbors);
             }
         for (PrintObject *obj : m_objects)
             obj->generate_belt_brim();
@@ -3134,10 +3147,16 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
                 obj->infill();
                 obj->ironing();
                 obj->nonplanar_shells();
-                obj->generate_support_material();
+            }
+        }
+        const SupportNeighborFootprints support_neighbors(m_objects);
+        for (PrintObject *obj : m_objects) {
+            if (re_slicing_objects.count(obj) != 0) {
+                obj->generate_support_material(true, &support_neighbors);
                 obj->detect_overhangs_for_lift();
                 obj->estimate_curled_extrusions();
-            }
+            } else if (!obj->get_shared_object())
+                obj->trim_support_paths_by_neighbors(support_neighbors);
         }
     }
 

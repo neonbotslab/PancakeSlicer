@@ -6,7 +6,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 )
@@ -24,17 +26,44 @@ func (s *Server) authorized(r *http.Request) bool {
 		return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(s.cfg.BearerToken)) == 1
 	}
 	c, err := r.Cookie(accessCookie)
-	if err != nil || subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.accessProof())) != 1 {
-		return false
-	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+	return err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.accessProof())) == 1
+}
+
+func sameOrigin(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "same-origin", "none":
+		return true
+	case "":
+	default:
 		return false
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
 		u, err := url.Parse(origin)
-		return err == nil && strings.EqualFold(u.Host, r.Host)
+		return err == nil && u.Host != "" && strings.EqualFold(u.Host, r.Host)
 	}
 	return true
+}
+
+func publicMutation(r *http.Request) bool {
+	switch r.URL.Path {
+	case "/api/access":
+		return true
+	case "/api/resolve", "/api/slot-offer", "/api/blobs/missing":
+		return r.Method == "POST"
+	}
+	return false
+}
+
+func loopbackHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Unmap().IsLoopback()
 }
 
 func setAccessCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {

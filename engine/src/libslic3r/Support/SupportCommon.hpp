@@ -22,6 +22,29 @@ namespace Slic3r {
 class PrintObject;
 class SupportLayer;
 
+// Support generation can temporarily replace an object's slices while other objects
+// generate their supports in parallel. Keep the plate footprints read-only.
+class SupportNeighborFootprints
+{
+public:
+    explicit SupportNeighborFootprints(const PrintObjectPtrs &objects);
+    bool empty() const { return m_objects.empty(); }
+    Polygons polygons(const PrintObject &object, coordf_t bottom_z, coordf_t top_z, coord_t gap_xy) const;
+
+private:
+    struct LayerFootprint {
+        coordf_t bottom_z;
+        coordf_t top_z;
+        ExPolygons slices;
+    };
+    struct ObjectFootprint {
+        const PrintObject *source;
+        Points shifts;
+        std::vector<LayerFootprint> layers;
+    };
+    std::vector<ObjectFootprint> m_objects;
+};
+
 std::pair<SupportGeneratorLayersPtr, SupportGeneratorLayersPtr> generate_interface_layers(
     const PrintObjectConfig           &config,
     const SupportParameters           &support_params,

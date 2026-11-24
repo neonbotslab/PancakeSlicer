@@ -13,6 +13,8 @@ export interface ImportRow {
   notStored: string[]; note?: string;
   code?: 'import_invalid' | 'import_repeat';
   physical?: { printers: string[]; config: Record<string, string> };
+  sourceIds?: string[];
+  exportedPrinter?: boolean;
   matches?: { id: string; name: string; revision: number; record: AnyRecord; edited?: string; differ: number }[];
 }
 
@@ -25,14 +27,28 @@ export async function planImport(files: File[]): Promise<ImportRow[]> {
 }
 
 export async function applyImport(rows: ImportRow[]): Promise<{ profiles: number; connections: number; problems: string[] }> {
-  const records = rows.filter((r) => r.status !== 'skip' && r.record && r.kind).map((r) => ({ kind: r.kind!, record: r.record! }));
+  let records = rows.filter((r) => r.status !== 'skip' && r.record && r.kind).map((r) => ({
+    kind: r.kind!, record: r.record!, sourceIds: r.sourceIds, exportedPrinter: r.exportedPrinter,
+  }));
+  const problems: string[] = [];
+  if (records.some((r) => r.exportedPrinter)) {
+    const response = await mutation('/api/library/import/resolve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(records),
+    }, false, undefined, undefined, true);
+    if (!response.ok) throw await responseError(response);
+    const resolved = (await response.json()) as { records: typeof records; problems: string[] | null };
+    records = resolved.records;
+    problems.push(...resolved.problems ?? []);
+  }
   if (records.length) await commitRecords(records, { label: 'Import' });
   const hosts: { printer: string; config: Record<string, string> }[] = [];
   for (const r of rows) for (const printer of r.physical?.printers ?? []) hosts.push({ printer: printer.replace(/\s+@.*$/, ''), config: r.physical!.config });
-  if (!hosts.length) return { profiles: records.length, connections: 0, problems: [] };
-  if (getState().printerConnections.enabled === false) return { profiles: records.length, connections: 0, problems: ['Printer connections are off on this service; the print host settings were not migrated.'] };
+  if (!hosts.length) return { profiles: records.length, connections: 0, problems };
+  if (getState().printerConnections.enabled === false) {
+    problems.push('Printer connections are off on this service; the print host settings were not migrated.');
+    return { profiles: records.length, connections: 0, problems };
+  }
   let connections = 0;
-  const problems: string[] = [];
   for (const { printer, config } of hosts) {
     const record = getState().records.printers.find((p) => p.name === printer && !p.archived);
     if (!record) { problems.push(`${printer}: no saved printer of that name. Add the printer, then import its physical printer again.`); continue; }

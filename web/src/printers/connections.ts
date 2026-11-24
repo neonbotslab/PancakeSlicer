@@ -7,12 +7,12 @@ import { joinParts, SEP } from '../separator';
 import { PrinterNotificationTracker } from '../notifications/printer-events';
 import { publishNotice } from '../notifications/browser';
 
-export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet' | 'flashforge' | 'elegoolink';
+export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet' | 'flashforge' | 'elegoolink' | 'repetier';
 export interface PrinterConnection {
   printer: string; id: string; name: string; kind: ConnectionKind;
-  host?: string; serial?: string; model?: string; url?: string; auth?: string; username?: string; limited_controls?: boolean;
+  host?: string; serial?: string; model?: string; url?: string; auth?: string; username?: string; slug?: string; limited_controls?: boolean; no_telemetry?: boolean;
+  has_secret: boolean; trust?: string; web_ui?: string;
   auto_flow_calibration?: boolean;
-  has_secret: boolean; trust?: string;
 }
 export interface Temp { actual: number; target: number }
 export interface NozzleStatus { id: number; extruder: number; diameter: number; type?: string; flow?: string; rack?: boolean; abnormal?: boolean; legacy?: boolean }
@@ -20,7 +20,7 @@ export interface Tray { kind?: string; extruder?: number; id: number; ams: numbe
 export type LinkState = 'connecting' | 'online' | 'retrying' | 'stopped';
 export interface PrinterStatus {
   printer: string; link: LinkState; online: boolean;
-  state: 'connecting' | 'idle' | 'printing' | 'paused' | 'finished' | 'failed' | 'busy' | 'error' | 'offline';
+  state: 'connecting' | 'idle' | 'printing' | 'paused' | 'finished' | 'failed' | 'busy' | 'error' | 'offline' | 'unknown';
   job?: { id: string; plate: number; sent_at: string; thumbnail?: string }; started_at?: string; speed_mode?: number; light?: boolean; messages?: { code: string; message?: string }[];
   detail?: string; file?: string; progress?: number; elapsed_s?: number; file_estimate_s?: number; slicer_estimate_s?: number; remaining_s?: number; layer?: number; layers?: number;
   nozzle_temps?: (Temp & { id: number })[]; nozzle?: Temp; bed?: Temp; chamber?: Temp; nozzles?: NozzleStatus[]; fans?: Record<string, number>; trays?: Tray[]; at: string; last_seen?: string;
@@ -36,7 +36,7 @@ export interface PrinterConnections {
 
 export const KIND_LABEL: Record<ConnectionKind, string> = {
   'bambu-lan': 'Bambu Lab (LAN)', 'bambu-connect': 'Bambu Connect', moonraker: 'Klipper (Moonraker)',
-  octoprint: 'OctoPrint', prusalink: 'PrusaLink', duet: 'Duet (RepRapFirmware)', flashforge: 'Flashforge (LAN)', elegoolink: 'Elegoo Link',
+  octoprint: 'OctoPrint', prusalink: 'PrusaLink', duet: 'Duet (RepRapFirmware)', flashforge: 'Flashforge (LAN)', elegoolink: 'Elegoo Link', repetier: 'Repetier Server',
 };
 export const connectionOutput = (kind: ConnectionKind) => (kind === 'bambu-lan' || kind === 'bambu-connect' ? 'gcode.3mf' : 'gcode');
 
@@ -75,7 +75,7 @@ async function call<T>(url: string, init: RequestInit, quiet = false): Promise<T
 
 export interface ConnectionEdit {
   kind: ConnectionKind; name: string; host?: string; serial?: string; access_code?: string; model?: string;
-  url?: string; auth?: string; username?: string; key?: string; clear_key?: boolean;
+  url?: string; auth?: string; username?: string; slug?: string; key?: string; clear_key?: boolean; web_ui?: string;
 }
 export interface ConnectionTest { ok: boolean; stage: string; message: string; model?: string }
 export interface Discovered {
@@ -102,7 +102,7 @@ export async function readSendPlan(job: string, printer: string, signal?: AbortS
   return ((await r.json()) as { slots: SendPlanSlot[] }).slots;
 }
 
-export const LEGACY_HOST_KEYS = ['host_type', 'print_host', 'printhost_apikey', 'printhost_port', 'printhost_user', 'printhost_password', 'printhost_authorization_type', 'flashforge_serial_number'];
+export const LEGACY_HOST_KEYS = ['host_type', 'print_host', 'printhost_apikey', 'printhost_port', 'printhost_user', 'printhost_password', 'printhost_authorization_type', 'flashforge_serial_number', 'print_host_webui'];
 export async function migrateLegacyHost(printer: string, name: string, config: Record<string, unknown>): Promise<string | null> {
   const legacy = Object.fromEntries(LEGACY_HOST_KEYS.flatMap((k) => (config[k] == null || config[k] === '' ? [] : [[k, String([config[k]].flat()[0])]])));
   if (!legacy.print_host) return null;
@@ -111,10 +111,22 @@ export async function migrateLegacyHost(printer: string, name: string, config: R
   return `${name}: ${(await responseError(r)).message}`;
 }
 
+export function deviceWebUi(connection: PrinterConnection): string | undefined {
+  const address = connection.web_ui || connection.url;
+  if (!address || connection.kind === 'bambu-lan' || connection.kind === 'bambu-connect') return undefined;
+  try {
+    const u = new URL(address);
+    if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password) return undefined;
+    if (!connection.web_ui && connection.kind === 'moonraker' && u.port === '7125') u.port = '';
+    if (u.origin === location.origin) return undefined;
+    return u.toString();
+  } catch { return undefined; }
+}
+
 export function statusLine(st: PrinterStatus | undefined): string {
   if (!st) return '';
   if (!st.online) return st.link === 'connecting' ? 'Connecting…' : 'Offline';
-  const word = { idle: 'Connected', printing: 'Printing', paused: 'Paused', finished: 'Finished', failed: 'Last print failed', busy: 'Busy', error: 'Error', offline: 'Printer offline', connecting: 'Connecting…' }[st.state];
+  const word = { idle: 'Connected', printing: 'Printing', paused: 'Paused', finished: 'Finished', failed: 'Last print failed', busy: 'Busy', error: 'Error', offline: 'Printer offline', connecting: 'Connecting…', unknown: 'Connected (send only)' }[st.state];
   const parts = [word + (st.progress != null && (st.state === 'printing' || st.state === 'paused') ? ` ${Math.round(st.progress * 100)}%` : '')];
   if (st.remaining_s && st.state === 'printing') {
     const m = Math.round(st.remaining_s / 60);
@@ -133,6 +145,7 @@ export function presenceStatus(live: boolean, connection: PrinterConnection, st:
   if (connection.kind === 'bambu-connect') return { label: 'Bambu Connect', tone: 'online' };
   if (!live) return { label: 'Reconnecting…', tone: 'offline' };
   if (!st?.online) return { label: st ? statusLine(st) : 'Connecting…', tone: 'offline' };
+  if (st.state === 'unknown') return { label: statusLine(st), tone: 'online' };
   if (st.state === 'printing' || st.state === 'paused')
     return { label: brief ? `${st.state === 'paused' ? 'Paused' : 'Printing'}${st.progress != null ? ` ${Math.round(st.progress * 100)}%` : ''}` : statusLine(st), tone: statusTone(st) };
   return { label: 'Online', tone: 'online' };

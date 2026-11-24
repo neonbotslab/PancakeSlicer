@@ -2003,6 +2003,8 @@
             "sparse_infill_density",
             "fill_multiline",
             "sparse_infill_pattern",
+            "z_rivets",
+            "z_rivet_span",
             "tpms_adaptive",
             "tpms_interior_density",
             "tpms_adaptive_gradient",
@@ -2061,6 +2063,24 @@
               "source": "src/slic3r/GUI/Tab.cpp:3031",
               "modes": {
                 "sparse_infill_pattern": "Simple"
+              }
+            },
+            {
+              "options": [
+                "z_rivets"
+              ],
+              "source": "src/slic3r/GUI/Tab.cpp",
+              "modes": {
+                "z_rivets": "Simple"
+              }
+            },
+            {
+              "options": [
+                "z_rivet_span"
+              ],
+              "source": "src/slic3r/GUI/Tab.cpp",
+              "modes": {
+                "z_rivet_span": "Advanced"
               }
             },
             {
@@ -4976,6 +4996,8 @@
     "sparse_infill_density": "Simple",
     "fill_multiline": "Simple",
     "sparse_infill_pattern": "Simple",
+    "z_rivets": "Simple",
+    "z_rivet_span": "Advanced",
     "tpms_adaptive": "Advanced",
     "tpms_interior_density": "Advanced",
     "tpms_adaptive_gradient": "Advanced",
@@ -8793,6 +8815,15 @@
       "effect": "visible",
       "source": "src/slic3r/GUI/ConfigManipulation.cpp:828",
       "condition_source": "have_waves"
+    },
+    {
+      "options": [
+        "z_rivet_span"
+      ],
+      "condition": "(z_rivets)",
+      "effect": "visible",
+      "source": "src/slic3r/GUI/ConfigManipulation.cpp",
+      "condition_source": "z_rivets"
     }
   ],
   "source_counts": [

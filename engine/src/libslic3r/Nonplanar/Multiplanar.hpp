@@ -114,7 +114,7 @@ indexed_triangle_set chunk_piece(const indexed_triangle_set &mesh, const Multipl
 int printable_layers(const indexed_triangle_set &piece, const MultiplanarChunk &chunk, double layer_height);
 
 bool full_orientation(const PrintConfig &config);
-indexed_triangle_set slicing_frame_mesh(const PrintObject &object);
+indexed_triangle_set slicing_frame_mesh(const PrintObject &object, Transform3d *object_to_slicing_frame = nullptr);
 constexpr double RouteSeamEdge = 1.5, RouteSeamEdgeThin = 0.6;
 indexed_triangle_set route_cut_enforcers(const PrintObject &object);
 DynamicPrintConfig chunk_print_config(const PrintObject &object, bool support = false);

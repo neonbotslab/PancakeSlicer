@@ -3,6 +3,7 @@ import { bedArea } from '../actions';
 import { addVolume, getState, newId, setState, toast, type SeamMode, type Volume, type VolumeType } from '../state/store';
 import { undoable } from '../state/history';
 import { bakeStl, bedBounds, instanceBox, instanceMatrix, loadMesh, nextFreeSpot, primitiveGeometry, volumeGeometry } from './geometry';
+import { pickFiles } from '../file-picker';
 
 export const TYPE_LABEL: Record<VolumeType, string> = {
   part: 'Part', negative: 'Negative Part', modifier: 'Modifier', support_blocker: 'Support Blocker', support_enforcer: 'Support Enforcer', seam: 'Precise Seam',
@@ -44,12 +45,8 @@ export function addPrimitive(objectId: number, type: VolumeType, shape: Shape) {
 }
 
 export function loadVolume(objectId: number, type: VolumeType) {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.stl,.obj';
-  input.onchange = async () => {
-    const file = input.files?.[0];
-    if (!file) return;
+  pickFiles('.stl,.STL,.obj,.OBJ', async (files) => {
+    const file = files[0];
     try {
       const loaded = await loadMesh(file);
       const geometry = volumeGeometry(loaded.attributes.position.array as Float32Array, loaded.index?.array as Uint32Array,
@@ -60,8 +57,7 @@ export function loadVolume(objectId: number, type: VolumeType) {
     } catch (e) {
       toast('volumes_failed', { detail: e instanceof Error ? e.message : String(e) });
     }
-  };
-  input.click();
+  });
 }
 
 export async function addPrimitiveObject(shape: Shape) {

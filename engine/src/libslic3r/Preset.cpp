@@ -1137,7 +1137,7 @@ static std::vector<std::string> s_Preset_print_options{
     "top_layer_direction",
     "bottom_layer_direction",
     "counterbore_hole_bridging",
-    "infill_shift_step",
+    "infill_shift_step", "z_rivets", "z_rivet_span",
     "sparse_infill_rotate_template",
     "solid_infill_rotate_template",
     "symmetric_infill_y_axis",

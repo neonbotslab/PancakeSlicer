@@ -1,5 +1,6 @@
 import { unzip, strFromU8 } from 'fflate';
 import type { Config } from '../api/types';
+import type { SeamMode, VolumeType } from '../state/store';
 
 export interface ProjectPlate { index: number; name: string; origin: [number, number]; settings: Config;  locked?: boolean }
 
@@ -29,6 +30,8 @@ export interface ProjectItem {
   parts: number;
   paint?: ArchivePaint;
   partTris?: number[];
+  // The primary mesh of this build item appears first in the items array.
+  part?: { parent: number; type: VolumeType; seamMode?: SeamMode };
 }
 
 export type ArchivePaint = Partial<Record<'support' | 'seam' | 'fuzzy' | 'color', Record<string, string>>>;
@@ -41,6 +44,28 @@ interface Obj {
   paint?: ArchivePaint;
   components: { objectid: string; path?: string; transform: number[] }[];
 }
+
+interface PartSettings {
+  name?: string;
+  extruder?: number;
+  type: VolumeType;
+  seamMode?: SeamMode;
+}
+
+const PART_TYPES = new Map<string, VolumeType>([
+  ['negative_part', 'negative'], ['modifier_part', 'modifier'],
+  ['support_blocker', 'support_blocker'], ['support_enforcer', 'support_enforcer'],
+]);
+
+interface ObjectSettings {
+  name?: string;
+  extruder?: number;
+  settings: Config;
+  volumes: Set<string>;
+  parts: Map<string, PartSettings[]>;
+}
+
+type Mesh = { id: string; object: Obj; transform: number[] };
 
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
 
@@ -127,8 +152,8 @@ function normalizePath(path: string): string {
   return parts.join('/');
 }
 
-function parseSettings(text: string | undefined): Map<string, { name?: string; extruder?: number; settings: Config; volumes: Set<string> }> {
-  const out = new Map<string, { name?: string; extruder?: number; settings: Config; volumes: Set<string> }>();
+function parseSettings(text: string | undefined): Map<string, ObjectSettings> {
+  const out = new Map<string, ObjectSettings>();
   if (!text) return out;
   for (const object of text.matchAll(/<object\b([^>]*)>([\s\S]*?)<\/object>/g)) {
     const id = attr(object[1], 'id');
@@ -143,11 +168,29 @@ function parseSettings(text: string | undefined): Map<string, { name?: string; e
       return values;
     };
     const values = metadata(own);
-    const volumes = new Set([...object[2].matchAll(/<part\b([^>]*)>/g)]
-      .filter((p) => attr(p[1], 'subtype') !== 'normal_part').map((p) => attr(p[1], 'id')!));
+    const parts = new Map<string, PartSettings[]>();
+    const volumes = new Set<string>();
+    for (const part of object[2].matchAll(/<part\b([^>]*?)(?:\/>|>([\s\S]*?)<\/part>)/g)) {
+      const partId = attr(part[1], 'id');
+      if (!partId) continue;
+      const subtype = attr(part[1], 'subtype') ?? '';
+      if (subtype !== 'normal_part') volumes.add(partId);
+      const values = metadata(part[2] ?? '');
+      const extruder = Number(values.extruder);
+      const seam = /^precise_seam_(center|left|right|enforced|blocked|neutral)$/.exec(subtype);
+      const partSettings: PartSettings = {
+        name: values.name === undefined ? undefined : String(values.name),
+        extruder: Number.isSafeInteger(extruder) && extruder > 0 ? extruder : undefined,
+        type: seam ? 'seam' : PART_TYPES.get(subtype) ?? 'part',
+        ...(seam ? { seamMode: seam[1] as SeamMode } : {}),
+      };
+      const matches = parts.get(partId);
+      if (matches) matches.push(partSettings);
+      else parts.set(partId, [partSettings]);
+    }
     const firstVolume = /<volume\b[^>]*>([\s\S]*?)<\/volume>/.exec(object[2])?.[1];
     const extruder = Number(values.extruder ?? (firstVolume ? metadata(firstVolume).extruder : undefined)) || undefined;
-    out.set(id, { name: values.name === undefined ? undefined : String(values.name), extruder,
+    out.set(id, { name: values.name === undefined ? undefined : String(values.name), extruder, parts,
       settings: Object.fromEntries(Object.entries(values).filter(([k]) => k !== 'name' && k !== 'extruder')), volumes });
   }
   return out;
@@ -177,32 +220,16 @@ export async function readProject(file: File, objectsOnly = false): Promise<{ it
   const settingsBytes = entry('Metadata/model_settings.config') ?? entry('Metadata/Slic3r_PE_model.config');
   const settings = parseSettings(settingsBytes && strFromU8(settingsBytes));
 
-  const collect = (path: string, id: string, t: number[], out: number[], depth = 0) => {
+  function* meshes(path: string, id: string, t: number[], depth = 0): Generator<Mesh> {
     const o = model(path).objects.get(id);
     if (!o) throw new Error(`Missing 3D mesh object #${id} in 3MF file`);
     if (depth > 64) throw new Error('This 3MF file has circular or overly nested part references.');
-    if (o.vertices && o.triangles) {
-      const v = o.vertices;
-      const mirrored = t[0] * (t[4] * t[8] - t[5] * t[7]) - t[3] * (t[1] * t[8] - t[2] * t[7]) + t[6] * (t[1] * t[5] - t[2] * t[4]) < 0;
-      for (let corner = 0; corner < o.triangles.length; corner++) {
-        const k = o.triangles[mirrored && corner % 3 !== 0 ? corner + (corner % 3 === 1 ? 1 : -1) : corner];
-        const x = v[3 * k], y = v[3 * k + 1], z = v[3 * k + 2];
-        out.push(x * t[0] + y * t[3] + z * t[6] + t[9], x * t[1] + y * t[4] + z * t[7] + t[10], x * t[2] + y * t[5] + z * t[8] + t[11]);
-      }
-    }
+    if (o.vertices && o.triangles?.length) yield { id, object: o, transform: t };
     for (const c of o.components) {
       const childPath = c.path ? normalizePath(/^(?:\/|3D\/)/i.test(c.path) ? c.path : `${path.slice(0, path.lastIndexOf('/') + 1)}${c.path}`) : path;
-      collect(childPath, c.objectid, compose(c.transform, t), out, depth + 1);
+      yield* meshes(childPath, c.objectid, compose(c.transform, t), depth + 1);
     }
-  };
-
-  const leaves = (path: string, id: string, out: Obj[] = [], depth = 0): Obj[] => {
-    const o = model(path).objects.get(id);
-    if (!o || depth > 8) return out;
-    if (o.vertices && o.triangles) out.push(o);
-    for (const c of o.components) leaves(c.path ? normalizePath(/^(?:\/|3D\/)/i.test(c.path) ? c.path : `${path.slice(0, path.lastIndexOf('/') + 1)}${c.path}`) : path, c.objectid, out, depth + 1);
-    return out;
-  };
+  }
 
   const configBytes = entry('Metadata/project_settings.config');
   let config: Config = {};
@@ -246,14 +273,17 @@ export async function readProject(file: File, objectsOnly = false): Promise<{ it
   for (const p of plates) p.origin = [((p.index - 1) % columns) * width * 1.2 || 0, -Math.floor((p.index - 1) / columns) * depth * 1.2 || 0];
   const counts = new Map<string, number>();
   const build = root.build;
-  const items = build.map((b, i) => {
+  const items: ProjectItem[] = [];
+  const itemMeshes: Mesh[][] = [];
+  for (const [i, b] of build.entries()) {
     const meta = settings.get(b.objectid);
     const instance = counts.get(b.objectid) ?? 0;
     counts.set(b.objectid, instance + 1);
     const plateIndex = membership.get(`${b.objectid}:${instance}`) ?? (objectsOnly || plates.length === 1 ? plates[0].index : 0);
     if (!plateIndex && !objectsOnly) throw new Error('Couldn\'t match every model in the file to a saved build plate.');
     const plate = plates.find((p) => p.index === plateIndex);
-    return {
+    const list = [...meshes(rootPath, b.objectid, b.transform)];
+    const item = {
       id: b.objectid, instance, buildIndex: i, plateIndex,
       printable: b.printable,
       settings: objectsOnly ? {} : meta?.settings ?? {},
@@ -262,21 +292,41 @@ export async function readProject(file: File, objectsOnly = false): Promise<{ it
       origin: [b.transform[9] - (plate?.origin[0] ?? 0), b.transform[10] - (plate?.origin[1] ?? 0), b.transform[11]] as [number, number, number],
       rotZ: Math.atan2(b.transform[1], b.transform[0]) * 180 / Math.PI,
       transform: loadedItem(b),
-      ...(objectsOnly ? mergedPaint(b.objectid) : volumesOf(b.objectid)),
     };
-  });
-  function mergedPaint(id: string): { parts: 1; paint?: ArchivePaint } {
-    const paint: ArchivePaint = {};
-    let offset = 0;
-    for (const leaf of leaves(rootPath, id)) {
-      for (const [kind, map] of Object.entries(leaf.paint ?? {}) as [keyof ArchivePaint, Record<string, string>][])
-        for (const [k, v] of Object.entries(map)) (paint[kind] ??= {})[String(Number(k) + offset)] = v;
-      offset += leaf.triangles!.length / 3;
+    if (!objectsOnly || !list.length) {
+      items.push({ ...item, ...volumesOf(b.objectid, list.map((leaf) => leaf.object)) });
+      itemMeshes.push(list);
+      continue;
     }
-    return { parts: 1, ...(Object.keys(paint).length ? { paint } : {}) };
+    const partIndices = new Map<string, number>();
+    const parts = list.map((leaf) => {
+      const index = partIndices.get(leaf.id) ?? 0;
+      partIndices.set(leaf.id, index + 1);
+      const matches = meta?.parts.get(leaf.id);
+      return { leaf, settings: matches?.[index] ?? matches?.[0] };
+    });
+    const main = parts.findIndex(({ settings }) => !settings || settings.type === 'part');
+    if (main < 0) {
+      items.push({ ...item, parts: 0 });
+      itemMeshes.push([]);
+      continue;
+    }
+    const parent = items.length;
+    const primary = parts[main];
+    const extruder = primary.settings?.extruder ?? item.extruder;
+    items.push({ ...item, extruder, parts: parts.length, paint: primary.leaf.object.paint });
+    itemMeshes.push([primary.leaf]);
+    for (const [k, { leaf, settings }] of parts.entries()) {
+      if (k === main) continue;
+      const type = settings?.type ?? 'part';
+      const fallback = type === 'part' || type === 'modifier' ? item.extruder : extruder;
+      items.push({ ...item, name: settings?.name || leaf.object.name || `Part ${k + 1}`,
+        extruder: settings?.extruder ?? (fallback !== extruder ? fallback : 0),
+        parts: 1, paint: leaf.object.paint, part: { parent, type, seamMode: settings?.seamMode } });
+      itemMeshes.push([leaf]);
+    }
   }
-  function volumesOf(id: string): { parts: number; paint?: ArchivePaint; partTris?: number[] } {
-    const list = leaves(rootPath, id);
+  function volumesOf(id: string, list: Obj[]): { parts: number; paint?: ArchivePaint; partTris?: number[] } {
     if (list.length === 1) return { parts: 1, ...(list[0].paint ? { paint: list[0].paint } : {}) };
     const nonParts = settings.get(id)?.volumes;
     const comps = root.objects.get(id)?.components ?? [];
@@ -299,9 +349,16 @@ export async function readProject(file: File, objectsOnly = false): Promise<{ it
   }
   const mesh = (i: number) => {
     const tris: number[] = [];
-    collect(rootPath, build[i].objectid, build[i].transform, tris);
     const origin = plates.find((p) => p.index === items[i].plateIndex)?.origin ?? [0, 0];
-    for (let k = 0; k < tris.length; k += 3) { tris[k] -= origin[0]; tris[k + 1] -= origin[1]; }
+    for (const { object, transform: t } of itemMeshes[i]) {
+      const v = object.vertices!, triangles = object.triangles!;
+      const mirrored = t[0] * (t[4] * t[8] - t[5] * t[7]) - t[3] * (t[1] * t[8] - t[2] * t[7]) + t[6] * (t[1] * t[5] - t[2] * t[4]) < 0;
+      for (let corner = 0; corner < triangles.length; corner++) {
+        const k = triangles[mirrored && corner % 3 !== 0 ? corner + (corner % 3 === 1 ? 1 : -1) : corner];
+        const x = v[3 * k], y = v[3 * k + 1], z = v[3 * k + 2];
+        tris.push(x * t[0] + y * t[3] + z * t[6] + t[9] - origin[0], x * t[1] + y * t[4] + z * t[7] + t[10] - origin[1], x * t[2] + y * t[5] + z * t[8] + t[11]);
+      }
+    }
     return tris.length ? new Float32Array(tris) : null;
   };
   const numbers = (v: unknown): number[] | null => {
@@ -312,7 +369,7 @@ export async function readProject(file: File, objectsOnly = false): Promise<{ it
   const colours = (Array.isArray(colourValue) ? colourValue : typeof colourValue === 'string' ? colourValue.split(';') : [])
     .map(String);
   const materials = { plates, config, colours, matrix: numbers(config.flush_volumes_matrix), multiplier: numbers(config.flush_multiplier)?.[0] ?? null,
-    hasConfig: !!configBytes || !!entry('Metadata/Slic3r_PE.config'), builds: items.map((it) => ({ object: Number(it.id), instance: it.instance })) };
+    hasConfig: !!configBytes || !!entry('Metadata/Slic3r_PE.config'), builds: items.filter((it) => !it.part).map((it) => ({ object: Number(it.id), instance: it.instance })) };
   if (objectsOnly) {
     materials.config = {}; materials.colours = []; materials.matrix = null; materials.multiplier = null; materials.hasConfig = false;
     materials.plates = plates.map((p) => ({ index: p.index, name: '', origin: p.origin, settings: {} }));

@@ -169,7 +169,7 @@ func handshakeError(err error, port int) error {
 }
 
 type ftpConn struct {
-	conn *tls.Conn
+	conn net.Conn
 	r    *bufio.Reader
 }
 
@@ -270,12 +270,16 @@ func ftpFailure(ctx context.Context, err error, step string) error {
 	return netError(err, "the printer (FTPS port 990, "+step+")")
 }
 
-func ftpsUpload(ctx context.Context, host string, config *tls.Config, u *upload) (err error) {
+func ftpsUpload(ctx context.Context, host string, config *tls.Config, u *upload) error {
 	c, err := ftpsLogin(ctx, host, config, u.secret)
 	if err != nil {
 		return err
 	}
 	defer c.conn.Close()
+	return c.upload(ctx, host, config, u)
+}
+
+func (c *ftpConn) upload(ctx context.Context, host string, config *tls.Config, u *upload) (err error) {
 	step := "setup"
 	defer func() {
 		if err != nil {
@@ -470,10 +474,25 @@ func (u *upload) bambuProjectFileMessage(sequence, plate, md5sum, fileURL string
 	if flowCali == flowCalibrationAuto && !u.printer.supportsAutoFlowCalibration() {
 		flowCali = flowCalibrationOn
 	}
+	file := u.filename
+	if fileURL == "file:///sdcard/"+u.filename {
+		model := strings.TrimPrefix(u.printer.model, "Bambu Lab ")
+		if model == "" || model == "?" {
+			model = bambuSerialModel(u.printer.Serial)
+		}
+		switch model {
+		case "H2D":
+			fileURL = "ftp:///" + u.filename
+			file = fileURL
+		case "P2S":
+			fileURL = "ftp:///cache/" + u.filename
+			file = fileURL
+		}
+	}
 	return map[string]any{"print": map[string]any{
 		"sequence_id": sequence, "command": "project_file", "param": plate,
 		"project_id": "0", "profile_id": "0", "task_id": "0", "subtask_id": "0", "subtask_name": strings.TrimSuffix(u.filename, ".gcode.3mf"),
-		"file": u.filename, "url": fileURL, "md5": md5sum,
+		"file": file, "url": fileURL, "md5": md5sum,
 		"timelapse": u.options.timelapse, "bed_type": "auto", "bed_leveling": u.options.bedLeveling,
 		"flow_cali": flowCali == flowCalibrationOn, "extrude_cali_flag": flowCali,
 		"vibration_cali": u.options.vibrationCali, "layer_inspect": false, "use_ams": u.options.useAMS, "ams_mapping": legacyMapping, "ams_mapping2": addresses,
@@ -769,11 +788,11 @@ func bambuModel(product, code string) string {
 }
 
 var bambuLegacyProjectModels = map[string]string{
-	"N1": "A1 mini", "N2S": "A1", "C11": "P1P", "C12": "P1S", "C13": "X1E", "BL-P001": "X1 Carbon", "BL-P002": "X1",
+	"N1": "A1 mini", "N2S": "A1", "C11": "P1P", "C12": "P1S", "C13": "X1E", "BL-P001": "X1 Carbon", "BL-P002": "X1", "O1D": "H2D", "N7": "P2S",
 }
 
 var bambuSerialModels = map[string]string{
-	"030": "A1 mini", "039": "A1", "01S": "P1P", "01P": "P1S", "00M": "X1 Carbon", "00W": "X1", "03W": "X1E", "094": "H2D",
+	"030": "A1 mini", "039": "A1", "01S": "P1P", "01P": "P1S", "00M": "X1 Carbon", "00W": "X1", "03W": "X1E", "094": "H2D", "22E": "P2S",
 }
 
 func bambuSerialModel(serial string) string {

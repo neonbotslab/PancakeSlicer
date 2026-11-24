@@ -1329,6 +1329,8 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     }
 
 	std::scoped_lock<std::mutex> lock(this->state_mutex());
+    const bool had_support_neighbors = this->num_object_instances() > 1;
+    bool print_instances_changed = false;
 
     if (! print_diff.empty())
         update_apply_status(this->invalidate_state_by_config_options(new_full_config, print_diff));
@@ -1628,6 +1630,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 }
 			if (new_objects || deleted_objects)
                 update_apply_status(this->invalidate_steps({ psSkirtBrim, psWipeTower, psGCodeExport }));
+            print_instances_changed |= new_objects || deleted_objects;
             if ((new_objects || deleted_objects) && m_config.belt_printer.value)
                 for (PrintObject *object : m_objects)
                     if (object->has_belt_brim())
@@ -1649,6 +1652,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             for (PrintObject *object : m_objects)
                 update_apply_status(object->invalidate_step(posSlice));
         }
+        print_instances_changed |= belt_instances_shifted;
     }
 
     int new_used_filaments = this->extruders(true).size();
@@ -1824,6 +1828,13 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         for (PrintObject *object : m_objects)
             if (Nonplanar::auto_rotary_requested(*object))
                 update_apply_status(object->invalidate_step(posSlice));
+
+    if ((had_support_neighbors || this->num_object_instances() > 1) &&
+        (print_instances_changed || std::any_of(m_objects.begin(), m_objects.end(),
+            [](const PrintObject *object) { return !object->is_step_done_unguarded(posSlice); })))
+        for (PrintObject *object : m_objects)
+            if (object->is_step_done_unguarded(posSupportMaterial) || object->is_step_started_unguarded(posSupportMaterial))
+                update_apply_status(object->invalidate_step(posSupportMaterial));
 
     for (PrintObject *object : m_objects)
     {

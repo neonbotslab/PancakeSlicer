@@ -9,7 +9,7 @@ import { FacetGroup, FacetsHead } from '../components/Facets';
 import { Caret } from '../components/Caret';
 import { ManagerProfileRow } from './ManagerProfileRow';
 import { recordProblems } from '../persist/profile-library';
-import { copyRecord, creationPending, commitRecords } from './transactions';
+import { copyRecord, creationPending, restoreProfile } from './transactions';
 import { newProfileNameError } from './save-to-profile';
 import { documentGeneration } from '../state/history';
 import { DetailPane, ProfileEditor, type ProfileDraft } from './ProfileEditor';
@@ -125,12 +125,7 @@ function RemovedDetails({type,record}: {type:PresetType;record:ProfileRecord}) {
   const restore=async()=>{
     setBusy(true);
     try {
-      const kind=type === 'machine' ? 'printer' : type === 'process' ? 'process' : 'filament', s=getState();
-      const live=((kind === 'printer' ? s.records.printers : kind === 'process' ? s.records.processes : s.records.filaments) as ProfileRecord[]).filter(r=>!r.archived).map(r=>r.name);
-      let name=record.name;for(let n=2;live.includes(name);n++)name=`${record.name} (${n})`;
-      
-      const {archived:_archived,...rest}=record;
-      await commitRecords([{kind,record:{...rest,name} as never}],{label:'Restore'});
+      const name = await restoreProfile(type, record);
       (name===record.name ? toast('restored', { name }) : toast('brought_back_as_since', { name, name2: record.name }));
     } catch(e) {failed('Restore',e);} finally {setBusy(false);}
   };

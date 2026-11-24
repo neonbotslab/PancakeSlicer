@@ -3587,6 +3587,7 @@ TreeSupportData::TreeSupportData(const PrintObject &object, coordf_t xy_distance
     {
         const Layer* layer = object.get_layer(layer_nr);
         m_max_move_distances[layer_nr] = layer->height * branch_scale_factor;
+        m_neighbor_outlines.push_back(union_ex(object.support_neighbor_footprint(layer->bottom_z(), layer->print_z, 0)));
         m_layer_outlines.push_back(ExPolygons());
         ExPolygons& outline = m_layer_outlines.back();
         for (const ExPolygon& poly : layer->lslices) {
@@ -3678,6 +3679,9 @@ const ExPolygons& TreeSupportData::calculate_collision(const RadiusLayerPair& ke
     assert(key.layer_nr < m_layer_outlines.size());
 
     ExPolygons collision_areas = offset_ex(m_layer_outlines[key.layer_nr], scale_(key.radius+m_xy_distance));
+    const ExPolygons &neighbors = m_neighbor_outlines[key.layer_nr];
+    if (!neighbors.empty())
+        collision_areas = union_ex(collision_areas, offset(neighbors, scale_(key.radius + m_xy_distance)));
     collision_areas = expolygons_simplify(collision_areas, scale_(m_radius_sample_resolution));
     const auto ret = m_collision_cache.insert({ key, std::move(collision_areas) });
     return ret.first->second;

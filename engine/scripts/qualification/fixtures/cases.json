@@ -142,5 +142,48 @@
       "{model}"
     ],
     "audit_checks": null
+  },
+  "benchy_nonplanar": {
+    "model": "benchy",
+    "argv": [
+      "--profiles",
+      "{resources}/profiles",
+      "--printer",
+      "Bambu Lab A1 mini 0.4 nozzle",
+      "--process",
+      "0.20mm Standard",
+      "--filament",
+      "Bambu PLA Basic",
+      "--set",
+      "curr_bed_type=Textured PEI Plate",
+      "--set",
+      "nonplanar_mode=nonplanar_top",
+      "--set",
+      "nonplanar_curved_top_layers=2",
+      "--set",
+      "nonplanar_wave=off",
+      "--set",
+      "nonplanar_overhangs=1",
+      "--set",
+      "nonplanar_ironing=1",
+      "--set",
+      "nonplanar_sublayer_walls=1",
+      "--set",
+      "nonplanar_bridges=1",
+      "--set",
+      "nonplanar_curved_max_angle=45",
+      "--datadir",
+      "{out}/data",
+      "--verify",
+      "--explain",
+      "--json",
+      "{out}/tool.json",
+      "--gcode-3mf",
+      "{out}/out.gcode.3mf",
+      "-o",
+      "{out}/out.gcode",
+      "{model}"
+    ],
+    "audit_checks": 71
   }
 }

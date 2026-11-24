@@ -2,12 +2,15 @@
 #include "LayerField.hpp"
 #include "libslic3r/ExPolygon.hpp"
 
+#include <admesh/stl.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace Slic3r {
 class PrintObject;
+enum class EnforcerBlockerType : int8_t;
 }
 
 namespace Slic3r::Nonplanar {
@@ -27,11 +30,12 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
 class NativeSliceOverride
 {
 public:
-    NativeSliceOverride(std::string name, std::vector<ExPolygons> slices);
+    NativeSliceOverride(std::string name, std::vector<ExPolygons> slices, indexed_triangle_set enforcers, indexed_triangle_set blockers);
     ~NativeSliceOverride();
     NativeSliceOverride(const NativeSliceOverride &) = delete;
     NativeSliceOverride &operator=(const NativeSliceOverride &) = delete;
     static const std::vector<ExPolygons> *find(const std::string &name);
+    static const indexed_triangle_set *support_facets(const std::string &name, EnforcerBlockerType type);
 
 private:
     std::string m_name;

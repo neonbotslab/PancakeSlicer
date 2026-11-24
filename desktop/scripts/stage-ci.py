@@ -136,7 +136,10 @@ def main():
     parser.add_argument('--engine-source', required=True)
     parser.add_argument('--image')
     parser.add_argument('--dependency-prefix',type=Path)
+    parser.add_argument('--reference-only', action='store_true', help='Generate the Linux x64 reference and stop before qualifying the payload')
     args = parser.parse_args()
+    if args.reference_only and (args.os, args.arch) != ('linux', 'x64'):
+        parser.error('--reference-only requires Linux x64')
     tool = args.tool.resolve()
     build = ROOT / 'desktop/build'
     build.mkdir(parents=True, exist_ok=True)
@@ -186,6 +189,7 @@ def main():
         f'-s -w -X main.buildRevision={revision} -X main.buildImage=pancakeslicer-desktop-{args.os}-{args.arch}',
         '-o', server, '.', cwd=ROOT / 'server', env=env)
     server.chmod(0o755)
+    shutil.copytree(ROOT / 'server/support-fins', engine / 'support-fins')
     shutil.copy2(ROOT / 'server/schemas.json', engine / 'schemas.json')
     if args.os == 'mac':
         run('codesign', '--force', '--sign', '-', server)
@@ -215,6 +219,8 @@ def main():
             '--resources', resources, '--engine-source', engine_source, '--output', reference)
         if not json.loads((reference / 'qualification.json').read_text())['audits_passed']:
             raise RuntimeError('The engine reference failed its audits')
+    if args.reference_only:
+        return
     run(sys.executable, ROOT / 'engine/scripts/qualification/qualify.py', '--command-prefix', json.dumps(command_prefix), '--tool', native,
         '--resources', resources, '--engine-source', engine_source, '--publication-source', revision,
         '--reference', reference, '--output', qualification)
@@ -224,7 +230,8 @@ def main():
                   'native_binary_sha256': digest(native), 'native_resources_sha256': resource_hash,
                   'server_binary_sha256': digest(server),
                   'native_manifest_sha256': digest(engine / 'surface-manifest.json'),
-                  'native_qualification_sha256': digest(engine / 'artifact-qualification.ready')}
+                  'native_qualification_sha256': digest(engine / 'artifact-qualification.ready'),
+                  'support_fins_sha256': digest(engine / 'support-fins/support-fins.mjs')}
     write_json(engine / 'COMPONENTS.json', components)
     write_json(web / 'COMPONENTS.json', components)
     (web / 'REVISION.txt').write_text(revision + '\n', encoding='utf-8')

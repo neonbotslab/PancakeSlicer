@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "lCZzm0T7xxIG25jo",
 	"instantiation": "true",
+	"nonplanar_head": "",
 	"nozzle_diameter": [
 		"0.8"
 	],

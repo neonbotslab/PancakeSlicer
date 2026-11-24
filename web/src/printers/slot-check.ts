@@ -1,6 +1,6 @@
 import { effectiveConfig, getState, markStale, setState, type PlateObject, type State } from '../state/store';
 import { undoable } from '../state/history';
-import { slotFilaments, stripOf, withStrip } from '../profiles/slots';
+import { slotFilaments, slotMixes, stripOf, withStrip } from '../profiles/slots';
 import { paintOf, type PaintNode } from '../plater/paint';
 import type { Config } from '../api/types';
 
@@ -53,10 +53,19 @@ export function remapMissing(issues: SlotIssues) {
   undoable('Change Filament', () => setState((st) => ({ objects: st.objects.map(fix), job: markStale(st.job) })));
 }
 
-export function slicedSlots(s: State): State {
+export function sliceUsedSlots(s: State): Set<number> {
+  const slots = new Set(plateSlots(s));
   const print = effectiveConfig(s, 'process');
-  const top = Math.max(1, ...s.objects.flatMap(used), ...plateSlots(s), ...FILAMENT_KEYS.map((key) => Number(print[key]) || 0),
-    ...s.events.flatMap((e) => e.type === 'change' ? [Number(e.text) || 0] : []));
+  for (const key of FILAMENT_KEYS) if (Number(print[key]) > 0) slots.add(Number(print[key]));
+  for (const event of s.events) if (event.type === 'change' && Number(event.text) > 0) slots.add(Number(event.text));
+  const mixes = slotMixes(s);
+  for (const slot of slots)
+    for (const component of mixes[slot - 1]?.components ?? []) slots.add(component);
+  return slots;
+}
+
+export function slicedSlots(s: State): State {
+  const top = Math.max(1, ...sliceUsedSlots(s));
   const strip = stripOf(s);
   return withStrip(s, { ids: strip.ids.slice(0, top), filaments: strip.filaments.slice(0, top), colours: strip.colours.slice(0, top),
     mixes: Object.fromEntries(Object.entries(strip.mixes).filter(([k]) => Number(k) < top)) });

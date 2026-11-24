@@ -10,7 +10,8 @@ const plain = (color: string) => {
   return m;
 };
 
-const WIDTH = 320, HEIGHT = 240;
+const WIDTH = 320, HEIGHT = 240, SCALE = 2;
+const SRGB = Uint8Array.from({ length: 256 }, (_, i) => { const c = i / 255; return Math.round(255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055)); });
 
 export function projectThumbnail(): string | null {
   const p = (window as unknown as { __plater?: { renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera } }).__plater;
@@ -19,11 +20,9 @@ export function projectThumbnail(): string | null {
   const box = new THREE.Box3();
   for (const o of s.objects) for (const i of o.instances) box.union(instanceBox(o, i));
   const sphere = box.getBoundingSphere(new THREE.Sphere());
-  const aspect = c.width / c.height;
-  const cam = new THREE.PerspectiveCamera(30, aspect, 1, 10000);
+  const cam = new THREE.PerspectiveCamera(30, WIDTH / HEIGHT, 1, 10000);
   const dir = new THREE.Vector3(0.45, -1, 0.8).normalize();
-  const fit = Math.min(1, aspect * (HEIGHT / WIDTH));
-  const dist = (1.15 * sphere.radius) / Math.sin(THREE.MathUtils.degToRad(15)) / fit;
+  const dist = (1.15 * sphere.radius) / Math.sin(THREE.MathUtils.degToRad(15));
   cam.position.copy(sphere.center).addScaledVector(dir, dist);
   cam.up.set(0, 0, 1);
   cam.lookAt(sphere.center);
@@ -41,16 +40,29 @@ export function projectThumbnail(): string | null {
     swapped.push([mesh, mesh.material]);
     mesh.material = plain(filamentColor(s, v?.extruder || o.extruder));
   }
-  try { p.renderer.render(p.scene, cam); }
-  finally {
+  // Render offscreen: drawing into the visible canvas (even for one task) shows up as a flicker in Firefox.
+  const w = WIDTH * SCALE, h = HEIGHT * SCALE, target = new THREE.WebGLRenderTarget(w, h, { samples: 4 });
+  const pixels = new Uint8Array(w * h * 4), previous = p.renderer.getRenderTarget();
+  try {
+    p.renderer.setRenderTarget(target);
+    p.renderer.render(p.scene, cam);
+    p.renderer.readRenderTargetPixels(target, 0, 0, w, h, pixels);
+  } finally {
+    p.renderer.setRenderTarget(previous);
+    target.dispose();
     for (const child of hidden) child.visible = true;
     for (const [mesh, material] of swapped) mesh.material = material;
   }
-  const h = Math.min(c.height, (c.width * HEIGHT) / WIDTH), w = (h * WIDTH) / HEIGHT;
-  const t = document.createElement('canvas');
-  t.width = WIDTH;
-  t.height = HEIGHT;
-  t.getContext('2d')!.drawImage(c, (c.width - w) / 2, (c.height - h) / 2, w, h, 0, 0, WIDTH, HEIGHT);
-  p.renderer.render(p.scene, p.camera);
+  // Render targets hold linear colour and rows bottom-up; encode sRGB and flip for the 2D canvas.
+  const image = new ImageData(w, h), row = w * 4;
+  for (let y = 0; y < h; y++)
+    for (let i = 0, src = (h - 1 - y) * row, dst = y * row; i < row; i += 4) {
+      image.data[dst + i] = SRGB[pixels[src + i]]; image.data[dst + i + 1] = SRGB[pixels[src + i + 1]];
+      image.data[dst + i + 2] = SRGB[pixels[src + i + 2]]; image.data[dst + i + 3] = 255;
+    }
+  const full = document.createElement('canvas'), t = document.createElement('canvas');
+  full.width = w; full.height = h; full.getContext('2d')!.putImageData(image, 0, 0);
+  t.width = WIDTH; t.height = HEIGHT;
+  t.getContext('2d')!.drawImage(full, 0, 0, WIDTH, HEIGHT);
   return t.toDataURL('image/jpeg', 0.8);
 }

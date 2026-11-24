@@ -5,14 +5,19 @@ import { plateSignature } from '../slice-input';
 import { plateForm } from './operations';
 import { postJob } from '../api/blobs';
 import { slotFilaments } from '../profiles/slots';
+import { slotIssues } from '../printers/slot-check';
+import { validateProfileSubmission } from '../profiles/submission';
 
 function wanted(s: State): boolean {
   if (!s.api || s.api.mock || s.project || !s.objects.length) return false;
+  const issues = slotIssues(s);
+  if (issues.missing.size > 0 || issues.empty.size > 0) return false;
+  try { validateProfileSubmission(s); } catch { return false; }
   const c = effectiveConfig(s, 'process');
   const on = (v: unknown) => v === true || v === 1 || v === '1' || v === 'true';
   if (!on(c.enable_prime_tower) || on(effectiveConfig(s, 'machine').belt_printer)) return false;
   if (c.print_sequence === 'by object' && s.objects.flatMap((o) => o.instances).filter((i) => i.printable !== false).length !== 1) return false;
-  return slotFilaments(s).length > 1 || String(c.timelapse_type) === '1' || on(c.enable_wrapping_detection);
+  return slotFilaments(s).filter(Boolean).length > 1 || String(c.timelapse_type) === '1' || on(c.enable_wrapping_detection);
 }
 
 const round = (v: number) => Math.round(v * 100) / 100;

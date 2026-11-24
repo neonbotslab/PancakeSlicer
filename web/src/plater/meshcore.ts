@@ -3,8 +3,12 @@ import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js';
 
 export function parseStl(buf: ArrayBuffer): Float32Array {
   const dv = new DataView(buf);
-  const tris = buf.byteLength >= 84 ? dv.getUint32(80, true) : -1;
-  if (tris >= 0 && 84 + tris * 50 === buf.byteLength) {
+  // Same test as the engine's admesh: a byte above 127 after the header, or a size that matches the header count, means
+  // binary; exporters that leave the count at 0 or wrong still load, with the count taken from the file size.
+  const bytes = new Uint8Array(buf, Math.min(84, buf.byteLength), Math.max(0, Math.min(128, buf.byteLength - 84)));
+  if (buf.byteLength >= 84 && (84 + dv.getUint32(80, true) * 50 === buf.byteLength || bytes.some((b) => b > 127))) {
+    if ((buf.byteLength - 84) % 50) throw new Error('its size doesn\'t match a binary STL.');
+    const tris = (buf.byteLength - 84) / 50;
     if (!tris) throw new Error('there are no triangles in it.');
     const out = new Float32Array(tris * 9);
     for (let t = 0, o = 0; t < tris; t++) {

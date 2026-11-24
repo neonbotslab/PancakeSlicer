@@ -117,63 +117,6 @@ set(lisbslic3r_sources
     ConnectedBodies.cpp
     ConnectedBodies.hpp
     ContourZ.cpp
-    Nonplanar/AdaptiveBands.cpp
-    Nonplanar/AdaptiveBands.hpp
-    Nonplanar/Wave.cpp
-    Nonplanar/Wave.hpp
-    Nonplanar/AtomToolpath.cpp
-    Nonplanar/AtomToolpath.hpp
-    Nonplanar/LeanVase.cpp
-    Nonplanar/LeanVase.hpp
-    Nonplanar/AutoMode.cpp
-    Nonplanar/AutoMode.hpp
-    Nonplanar/RegionDetect.cpp
-    Nonplanar/RegionDetect.hpp
-    Nonplanar/RegionMask.cpp
-    Nonplanar/Research.cpp
-    Nonplanar/Research.hpp
-    Nonplanar/RegionMask.hpp
-    Nonplanar/AutoOrient.cpp
-    Nonplanar/AutoOrient.hpp
-    Nonplanar/BeadModel.cpp
-    Nonplanar/BeadModel.hpp
-    Nonplanar/Calibration.cpp
-    Nonplanar/Calibration.hpp
-    Nonplanar/FlowMod.cpp
-    Nonplanar/FlowMod.hpp
-    Nonplanar/LayerField.hpp
-    Nonplanar/MaterialRules.cpp
-    Nonplanar/MaterialRules.hpp
-    Nonplanar/ConformalLayers.cpp
-    Nonplanar/ConformalLayers.hpp
-    Nonplanar/FieldOrder.cpp
-    Nonplanar/FieldOrder.hpp
-    Nonplanar/FieldObjective.cpp
-    Nonplanar/FieldObjective.hpp
-    Nonplanar/FieldTerm.cpp
-    Nonplanar/FieldTerm.hpp
-    Nonplanar/ClearanceTerms.cpp
-    Nonplanar/ClearanceTerms.hpp
-    Nonplanar/StrengthTerm.cpp
-    Nonplanar/StrengthTerm.hpp
-    Nonplanar/NpField.cpp
-    Nonplanar/NpField.hpp
-    Nonplanar/NativeLayers.cpp
-    Nonplanar/NativeLayers.hpp
-    Nonplanar/NativePrint.cpp
-    Nonplanar/NativePrint.hpp
-    Nonplanar/OneShotField.cpp
-    Nonplanar/OneShotField.hpp
-    Nonplanar/Npy.cpp
-    Nonplanar/Npy.hpp
-    Nonplanar/OrientationField.cpp
-    Nonplanar/OrientationField.hpp
-    Nonplanar/RotaryRouter.cpp
-    Nonplanar/RotaryRouter.hpp
-    Nonplanar/Sha256.cpp
-    Nonplanar/Sha256.hpp
-    Nonplanar/StageCache.cpp
-    Nonplanar/StageCache.hpp
     GCode/ToolKinematics.cpp
     GCode/ToolKinematics.hpp
     GCode/ClearanceRepair.cpp
@@ -186,75 +129,6 @@ set(lisbslic3r_sources
     GCode/ConformalEmit.hpp
     GCode/ConformalTravel.cpp
     GCode/ConformalTravel.hpp
-    Nonplanar/Validate.cpp
-    Nonplanar/ConformalBottom.cpp
-    Nonplanar/ConformalBottom.hpp
-    Nonplanar/ConformalSupport.cpp
-    Nonplanar/ConformalSupport.hpp
-    Nonplanar/CurvedBridge.cpp
-    Nonplanar/RotarySkin.cpp
-    Nonplanar/RotarySkin.hpp
-    Nonplanar/CurvedBridge.hpp
-    Nonplanar/CurvedOverhang.cpp
-    Nonplanar/CurvedOverhang.hpp
-    Nonplanar/ConformalIroning.cpp
-    Nonplanar/ConformalIroning.hpp
-    Nonplanar/ConformalShells.cpp
-    Nonplanar/ConformalShells.hpp
-    Nonplanar/PatchPreview.cpp
-    Nonplanar/PatchPreview.hpp
-    Nonplanar/ConformalVolume.cpp
-    Nonplanar/ConformalVolume.hpp
-    Nonplanar/LayerSchedule.cpp
-    Nonplanar/LayerSchedule.hpp
-    Nonplanar/PatchTools.cpp
-    Nonplanar/PatchTools.hpp
-    Nonplanar/Repair.cpp
-    Nonplanar/Repair.hpp
-    Nonplanar/Report.cpp
-    Nonplanar/Report.hpp
-    Nonplanar/Seams.cpp
-    Nonplanar/Seams.hpp
-    Nonplanar/ShellBase.cpp
-    Nonplanar/ShellBase.hpp
-    Nonplanar/ShellPaths.cpp
-    Nonplanar/ShellPaths.hpp
-    Nonplanar/ShellSeams.cpp
-    Nonplanar/ShellSeams.hpp
-    Nonplanar/SpiralTop.cpp
-    Nonplanar/SpiralTop.hpp
-    Nonplanar/HeadEnvelope.cpp
-    Nonplanar/HeadBoxLabel.hpp
-    Nonplanar/HeadEnvelope.hpp
-    Nonplanar/HeightField.cpp
-    Nonplanar/HeightField.hpp
-    Nonplanar/DeformSlice.cpp
-    Nonplanar/Rests.cpp
-    Nonplanar/Rests.hpp
-    Nonplanar/DeformSlice.hpp
-    Nonplanar/LayerFieldOpt.cpp
-    Nonplanar/LayerFieldOpt.hpp
-    Nonplanar/LayerSources.cpp
-    Nonplanar/LayerSources.hpp
-    Nonplanar/StudentNet.cpp
-    Nonplanar/StudentNet.hpp
-    Nonplanar/Multiplanar.cpp
-    Nonplanar/MultiplanarConfirm.cpp
-    Nonplanar/MultiplanarConfirm.hpp
-    Nonplanar/Multiplanar.hpp
-    Nonplanar/Slant.cpp
-    Nonplanar/Slant.hpp
-    Nonplanar/SlantChoice.hpp
-    Nonplanar/StrengthRoads.cpp
-    Nonplanar/StrengthRoads.hpp
-    Nonplanar/SubLayerWalls.cpp
-    Nonplanar/SubLayerWalls.hpp
-    Nonplanar/TopTexture.cpp
-    Nonplanar/TopTexture.hpp
-    Nonplanar/SurfaceClip.cpp
-    Nonplanar/SurfaceClip.hpp
-    Nonplanar/TiltBudget.cpp
-    Nonplanar/TiltBudget.hpp
     CustomGCode.cpp
     CustomGCode.hpp
     CutUtils.cpp
@@ -480,6 +354,8 @@ set(lisbslic3r_sources
     Layer.cpp
     Layer.hpp
     LayerRegion.cpp
+    ZRivets.cpp
+    ZRivets.hpp
     LayOnFace.cpp
     LayOnFace.hpp
     libslic3r.cpp
@@ -532,24 +408,6 @@ set(lisbslic3r_sources
     PerimeterGenerator.cpp
     PerimeterGenerator.hpp
     PlaceholderParser.cpp
-    Nonplanar/CurvedTopsFacet.hpp
-    Nonplanar/CurvedTopsFacet.cpp
-    Nonplanar/CurvedTopsSurface.hpp
-    Nonplanar/CurvedTopsBoundary.cpp
-    Nonplanar/CurvedTopsSurface.cpp
-    Nonplanar/CurvedTopsContinuous.cpp
-    Nonplanar/CurvedTopsContinuous.hpp
-    Nonplanar/Atom/border.cpp
-    Nonplanar/Atom/stripe.cpp
-    Nonplanar/Atom/stitcher.cpp
-    Nonplanar/Atom/subdivide.cpp
-    Nonplanar/Atom/stripes.cpp
-    Nonplanar/FirmwareTime.hpp
-    Nonplanar/FirmwareTime.cpp
-    Nonplanar/CurvedTopsSchedule.hpp
-    Nonplanar/CurvedTopsSchedule.cpp
-    Nonplanar/CurvedTopsOrder.hpp
-    Nonplanar/CurvedTopsOrder.cpp
     PlaceholderParser.hpp
     Platform.cpp
     Platform.hpp
@@ -729,6 +587,9 @@ set(lisbslic3r_sources
     FlushVolPredictor.cpp
 )
 
+include(Nonplanar/sources.cmake)
+list(APPEND lisbslic3r_sources ${nonplanar_sources})
+
 if (SLIC3R_CAD)
     list(APPEND lisbslic3r_sources
             CAD/GeometryEngine.cpp
@@ -762,6 +623,13 @@ add_library(libslic3r STATIC ${lisbslic3r_sources}
     "${CMAKE_CURRENT_BINARY_DIR}/libslic3r_version.h"
     ${OpenVDBUtils_SOURCES})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${lisbslic3r_sources})
+
+# These utilities have self-contained headers and compile without the engine PCH.
+find_package(Threads REQUIRED)
+add_library(libslic3r_nonplanar OBJECT ${nonplanar_utility_sources})
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${nonplanar_utility_sources})
+target_include_directories(libslic3r_nonplanar PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(libslic3r_nonplanar PRIVATE miniz Threads::Threads)
 
 if (SLIC3R_STATIC)
     set(CGAL_Boost_USE_STATIC_LIBS ON CACHE BOOL "" FORCE)
@@ -811,6 +679,7 @@ if (MSVC AND "${CMAKE_SIZEOF_VOID_P}" STREQUAL "4")
 endif ()
 
 encoding_check(libslic3r)
+encoding_check(libslic3r_nonplanar)
 
 target_compile_definitions(libslic3r PUBLIC -DUSE_TBB -DTBB_USE_CAPTURED_EXCEPTION=0)
 if (USE_SLIC3R_CONSOLE_LOG)
@@ -905,6 +774,7 @@ target_link_libraries(libslic3r
         glu-libtess
         JPEG::JPEG
         libslic3r_cgal
+        libslic3r_nonplanar
         mcut
         noise::noise
         PNG::PNG

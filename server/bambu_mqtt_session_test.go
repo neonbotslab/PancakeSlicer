@@ -420,7 +420,11 @@ func TestBambuMQTTCancelDuringPartialPacket(t *testing.T) {
 }
 
 func TestDialTLSCancellationClosesSocket(t *testing.T) {
-	certificate, err := cameraTLSListener()
+	config, err := cameraTunnelTLS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := tls.Listen("tcp", "127.0.0.1:0", config)
 	if err != nil {
 		t.Fatal(err)
 	}

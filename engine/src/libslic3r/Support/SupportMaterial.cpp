@@ -2864,6 +2864,9 @@ void PrintObjectSupportMaterial::trim_support_layers_by_object(
                     }
                 }
 
+                const double z_shift = object.belt_global_z_offset();
+                append(polygons_trimming, object.support_neighbor_footprint(
+                    support_layer.bottom_print_z() + z_shift, support_layer.print_z + z_shift, coord_t(gap_xy_scaled)));
                 support_layer.polygons = diff(support_layer.polygons, polygons_trimming);
             }
         });

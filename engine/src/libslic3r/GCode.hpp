@@ -63,7 +63,7 @@
 #include "Polyline.hpp"
 #include "BeltBrim.hpp"
 
-namespace Slic3r { class ExtrusionEntityCollection; }
+namespace Slic3r { class ExtrusionEntityCollection; class ZRivetPlugPath; }
 namespace Slic3r::Nonplanar { struct ConformalPatch; }
 
 namespace Slic3r {
@@ -533,6 +533,7 @@ protected:
     std::string     extrude_curved_tops(const Print &print, const std::vector<ObjectByExtruder::Island::Region> &by_region);
     std::string     extrude_perimeters(const Print& print, const std::vector<ObjectByExtruder::Island::Region>& by_region, bool is_first_layer, bool is_infill_first, bool unsupported_loops_only = false);
     std::string     extrude_infill(const Print& print, const std::vector<ObjectByExtruder::Island::Region>& by_region, bool ironing);
+    std::string     extrude_z_rivet_plug(const ZRivetPlugPath &plug);
     std::string     extrude_support(const ExtrusionEntityCollection& support_fills, const ExtrusionRole support_extrusion_role);
     std::string     extrude_conformal_patches(const Print &print, const std::vector<LayerToPrint> &layers, unsigned int extruder_id,
                                               size_t single_object_instance_idx, bool before = false);

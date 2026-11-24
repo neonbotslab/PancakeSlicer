@@ -63,8 +63,15 @@ namespace Slic3r::Nonplanar {
 
 namespace {
 
-std::mutex                                     g_override_mutex;
-std::map<std::string, std::vector<ExPolygons>> g_overrides;
+struct NativeSliceData
+{
+    std::vector<ExPolygons> slices;
+    indexed_triangle_set    enforcers;
+    indexed_triangle_set    blockers;
+};
+
+std::mutex                             g_override_mutex;
+std::map<std::string, NativeSliceData> g_overrides;
 
 double tilt_budget(const ToolKinematics &kinematics)
 {
@@ -166,10 +173,11 @@ std::shared_ptr<const LayerField> native_field(PrintObject &object)
     }
 }
 
-NativeSliceOverride::NativeSliceOverride(std::string name, std::vector<ExPolygons> slices) : m_name(std::move(name))
+NativeSliceOverride::NativeSliceOverride(std::string name, std::vector<ExPolygons> slices, indexed_triangle_set enforcers,
+                                         indexed_triangle_set blockers) : m_name(std::move(name))
 {
     std::lock_guard<std::mutex> lock(g_override_mutex);
-    g_overrides[m_name] = std::move(slices);
+    g_overrides.emplace(m_name, NativeSliceData{ std::move(slices), std::move(enforcers), std::move(blockers) });
 }
 
 NativeSliceOverride::~NativeSliceOverride()
@@ -182,7 +190,20 @@ const std::vector<ExPolygons> *NativeSliceOverride::find(const std::string &name
 {
     std::lock_guard<std::mutex> lock(g_override_mutex);
     const auto                  it = g_overrides.find(name);
-    return it == g_overrides.end() ? nullptr : &it->second;
+    return it == g_overrides.end() ? nullptr : &it->second.slices;
+}
+
+const indexed_triangle_set *NativeSliceOverride::support_facets(const std::string &name, EnforcerBlockerType type)
+{
+    std::lock_guard<std::mutex> lock(g_override_mutex);
+    const auto                  it = g_overrides.find(name);
+    if (it == g_overrides.end())
+        return nullptr;
+    if (type == EnforcerBlockerType::ENFORCER)
+        return &it->second.enforcers;
+    if (type == EnforcerBlockerType::BLOCKER)
+        return &it->second.blockers;
+    return nullptr;
 }
 
 double adaptive_level_ratio()
@@ -752,7 +773,7 @@ bool generate_planar_native_support(PrintObject &object)
         std::vector<const ExtrusionPath *> paths;
         for (const LayerRegion *region : layer->regions()) {
             flatten(&region->perimeters, paths);
-            flatten(&region->thin_fills, paths);
+            // Layer::make_fills already copies thin fills into fills.
             flatten(&region->fills, paths);
         }
         for (const ExtrusionPath *path : paths) {
@@ -817,7 +838,8 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         return;
     const double tilt_cap = std::max(0., tilt_budget(*kinematics) - Geometry::deg2rad(5.));
 
-    const indexed_triangle_set mesh = slicing_frame_mesh(object);
+    Transform3d                object_to_slicing_frame;
+    const indexed_triangle_set mesh = slicing_frame_mesh(object, &object_to_slicing_frame);
     double                     top  = 0.;
     for (const stl_vertex &v : mesh.vertices)
         top = std::max(top, field->phi(v.cast<double>()));
@@ -909,7 +931,9 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         if ((key.rfind("support_", 0) == 0 || key.rfind("tree_support", 0) == 0 || key == "enable_support") && config.has(key))
             config.set_key_value(key, object.config().option(key)->clone());
     config.set_deserialize_strict("independent_support_layer_height", "0");
-    if (native_planar_support())
+    const bool tree_support = is_tree(object.config().support_type.value);
+    const bool use_native_planar_support = native_planar_support() && !tree_support;
+    if (use_native_planar_support)
         config.set_key_value("enable_support", new ConfigOptionBool(false));
     const double            height = banded ? tops.back() : first + double(K - 1) * h;
     TriangleMesh            box    = make_cube(unscale<double>(bbox.size().x()), unscale<double>(bbox.size().y()), height);
@@ -918,6 +942,27 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
     ModelObject *model_object = model.add_object();
     model_object->name        = name;
     model_object->add_volume(std::move(box));
+    // The slice override supplies the part geometry. Only support modifiers become nested volumes.
+    indexed_triangle_set painted_enforcers, painted_blockers;
+    if (tree_support && object.config().enable_support.value) {
+        for (const ModelVolume *volume : object.model_object()->volumes) {
+            throw_if_canceled(object);
+            const Transform3d volume_trafo = object_to_slicing_frame * volume->get_matrix();
+            auto flatten_to_field = [&](indexed_triangle_set annotation) {
+                its_transform(annotation, volume_trafo, true);
+                annotation = Native::refine(std::move(annotation), np.mesh_edge_max);
+                for (stl_vertex &v : annotation.vertices)
+                    v.z() = float(field->phi(v.cast<double>()));
+                return annotation;
+            };
+            if (volume->is_support_enforcer() || volume->is_support_blocker())
+                model_object->add_volume(TriangleMesh(flatten_to_field(volume->mesh().its)), volume->type());
+            else if (volume->is_model_part() && volume->is_fdm_support_painted()) {
+                its_merge(painted_enforcers, flatten_to_field(volume->supported_facets.get_facets_strict(*volume, EnforcerBlockerType::ENFORCER)));
+                its_merge(painted_blockers, flatten_to_field(volume->supported_facets.get_facets_strict(*volume, EnforcerBlockerType::BLOCKER)));
+            }
+        }
+    }
     if (banded) {
         const double anchor = std::max(first, conformal_field->level_anchor()), body = conformal_field->body_height();
         std::vector<coordf_t> profile { 0., first, first - 1e-4, first };
@@ -927,7 +972,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         model_object->layer_height_profile.set(profile);
     }
     model_object->add_instance();
-    const NativeSliceOverride registered(name, std::move(shifted));
+    const NativeSliceOverride registered(name, std::move(shifted), std::move(painted_enforcers), std::move(painted_blockers));
     Print                     print;
     const NestedFieldSlice    nested;
     try {
@@ -954,6 +999,8 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         BOOST_LOG_TRIVIAL(warning) << "Native layers " << object.model_object()->name << ": nested centre " << center.transpose()
                                    << " against the areas' " << c.transpose();
     const size_t n = std::min(K, sliced.layers().size());
+    if (n == 0)
+        return;
     if (sliced.layers().size() != K)
         BOOST_LOG_TRIVIAL(warning) << "Native layers " << object.model_object()->name << ": " << sliced.layers().size()
                                    << " nested layers for " << K << " field layers";
@@ -970,9 +1017,10 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
             k = long(std::min_element(tops.begin(), tops.end(), [z = layer->print_z](double a, double b) {
                          return std::abs(a - z) < std::abs(b - z);
                      }) - tops.begin());
-        if (k >= 1 && size_t(k) < n) {
+        if (k >= (tree_support ? 0 : 1) && size_t(k) < n) {
+            const size_t previous = support[size_t(k)].size();
             flatten(&layer->support_fills, support[size_t(k)]);
-            support_paths += support[size_t(k)].size();
+            support_paths += support[size_t(k)].size() - previous;
         }
     }
     const SeamPosition        seam_pos = object.config().seam_position.value;
@@ -987,15 +1035,37 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
     };
     const SeamCost           *seam_at  = seam_pos == spNearest || seam_pos == spRandom ? nullptr : &seam_cost;
     std::deque<ExtrusionLoop> seamed;
+    // The outer print already supplies the first part layer. Only tree feet come from the nested first layer.
+    const size_t layer_offset = support.front().empty() ? 1 : 0;
+    if (layer_offset == 0) {
+        internal.push_back(domains.front());
+        for (const ExtrusionPath *path : support.front()) {
+            const size_t m = path->polyline.points.size();
+            if (m < 2)
+                continue;
+            FieldRoad r;
+            r.layer = 0;
+            Polyline3 line;
+            for (const Point3 &p : path->polyline.points) {
+                const double x = unscale<double>(p.x() + c_scaled.x()), y = unscale<double>(p.y() + c_scaled.y());
+                r.tip.emplace_back(x, y, first);
+                r.deformed.emplace_back(x, y, mids.front());
+                line.points.push_back(Point3::new_scale(x, y, first + raft - host->print_z));
+            }
+            r.path = std::make_unique<ExtrusionPathConformal>(std::move(line), *path, std::vector<float>(m, path->height),
+                                                            std::vector<Vec3f>(m, Vec3f::UnitZ()));
+            points += m;
+            roads.push_back(std::move(r));
+        }
+    }
     for (size_t k = 1; k < n; ++k) {
         seam_k = k;
         const Layer &layer = *sliced.layers()[k];
         internal.push_back(domains[k]);
         std::vector<const ExtrusionPath *> paths = support[k];
-        for (const LayerRegion *region : layer.regions()) {
+        for (const LayerRegion *region : layer.regions())
             flatten(&region->perimeters, paths, seam_at, &seamed);
-            flatten(&region->thin_fills, paths);
-        }
+        // Layer::make_fills already copies thin fills into fills.
         for (const LayerRegion *region : layer.regions())
             flatten(&region->fills, paths);
         for (const ExtrusionPath *path : paths) {
@@ -1066,12 +1136,12 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
             for (const Vec3d &p : tips)
                 r.deformed.emplace_back(p.x(), p.y(), mids[k]);
             r.tip   = std::move(tips);
-            r.layer = k - 1;
+            r.layer = k - layer_offset;
             points += m;
             roads.push_back(std::move(r));
         }
     }
-    if (native_planar_support() && object.config().enable_support.value) {
+    if (use_native_planar_support && object.config().enable_support.value) {
         std::vector<FieldRoad> planar = native_planar_support_roads(object, *field, roads, domains, tops, first, h, raft, host->print_z);
         for (FieldRoad &r : planar)
             if (r.path)
@@ -1082,12 +1152,13 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
     op.kinematics = kinematics.get();
     op.max_tilt   = std::max(0., tilt_budget(*kinematics) - Geometry::deg2rad(1.));
     op.lean_max   = 0.;
-    op.planar_support = native_planar_support() && object.config().enable_support.value;
+    op.planar_support = use_native_planar_support && object.config().enable_support.value;
     op.axis_blend     = native_axis_key("NP_NATIVE_AXIS_BLEND", 10., kinematics->rotary_count() > 0);
-    op.layer_top.assign(tops.begin() + 1, tops.begin() + std::ptrdiff_t(n));
-    op.layer_height.resize(n - 1);
-    for (size_t k = 1; k < n; ++k)
-        op.layer_height[k - 1] = tops[k] - tops[k - 1];
+    const size_t road_layers = n - layer_offset;
+    op.layer_top.assign(tops.begin() + std::ptrdiff_t(layer_offset), tops.begin() + std::ptrdiff_t(n));
+    op.layer_height.resize(road_layers);
+    for (size_t k = layer_offset; k < n; ++k)
+        op.layer_height[k - layer_offset] = k == 0 ? first : tops[k] - tops[k - 1];
     const char *road_ids_env = research_switch("NP_NATIVE_ROAD_IDS");
     const bool road_ids = road_ids_env != nullptr && *road_ids_env != '\0' && std::string(road_ids_env) != "0";
     if (road_ids) {
@@ -1150,14 +1221,14 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
     });
     const size_t n_roads = roads.size();
     BandOrderStats band_stats;
-    const size_t   conflicts = conformal ? layer_order_head_conflicts(roads, n - 1, op.head) : 0;
+    const size_t   conflicts = conformal ? layer_order_head_conflicts(roads, road_layers, op.head) : 0;
     if (conformal)
         BOOST_LOG_TRIVIAL(info) << "Conformal layers " << object.model_object()->name << ": " << conflicts
                                 << " cells where whole layers would meet the head";
     const std::vector<std::pair<Vec3d, Vec3d>> precede = conformal ? conformal_precedence(*object.model_object()) :
                                                                      std::vector<std::pair<Vec3d, Vec3d>>();
-    FieldOrder     order = conformal ? band_order_roads(roads, n - 1, conflicts > op.head.duct_graze_limit ? conformal_band_height(op.head, h) :
-                                                                                      std::numeric_limits<double>::infinity(), &band_stats, &precede, &domains) :
+    FieldOrder     order = conformal ? band_order_roads(roads, road_layers, conflicts > op.head.duct_graze_limit ? conformal_band_height(op.head, h) :
+                                                                                      std::numeric_limits<double>::infinity(), &band_stats, &precede, &internal) :
                                        layer_order_field_roads(roads, op);
     if (conformal)
         BOOST_LOG_TRIVIAL(info) << "Conformal layers " << object.model_object()->name << ": band " << band_stats.band << " mm from z "

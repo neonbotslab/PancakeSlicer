@@ -34,9 +34,10 @@ struct EdgeHash
     size_t operator()(const Edge &e) const { return std::hash<uint64_t>()((uint64_t(uint32_t(e.first)) << 32) | uint32_t(e.second)); }
 };
 
-indexed_triangle_set refine(const indexed_triangle_set &in, double max_len)
+}
+
+indexed_triangle_set refine(indexed_triangle_set its, double max_len)
 {
-    indexed_triangle_set its = in;
     const float          max2 = float(max_len * max_len);
     for (int pass = 0; pass < 24; ++pass) {
         std::unordered_map<Edge, int, EdgeHash> mid;
@@ -93,6 +94,8 @@ indexed_triangle_set refine(const indexed_triangle_set &in, double max_len)
     }
     return its;
 }
+
+namespace {
 
 Vec3d edge_crossing(const LayerField &field, double level, Vec3d a, Vec3d b, double fa, double fb, double eps)
 {

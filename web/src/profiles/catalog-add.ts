@@ -1,5 +1,6 @@
 import { noticeText } from '../notice-codes';
 import { getState, toast } from '../state/store';
+import { availableName } from './catalog';
 import { commitRecords } from './transactions';
 import type { FilamentRecord, LibraryRecords, PrinterRecord } from './records';
 import { printerVendors, type CatalogModel, type CatalogVendor } from './catalog-reads';
@@ -25,7 +26,7 @@ export interface AddResult { keys: string[]; existing: string[]; skipped: string
 
 function namer(records: { name: string; archived?: unknown }[]) {
   const taken = new Set(records.filter((r) => !r.archived).map((r) => r.name));
-  return (wanted: string) => { let name = wanted, n = 2; while (taken.has(name)) name = `${wanted} (${n++})`; taken.add(name); return name; };
+  return (wanted: string) => { const name = availableName(taken, wanted); taken.add(name); return name; };
 }
 type Plan<R> = { records: R[]; existing: string[]; skipped: string[]; chosen: string[]; wanted: string[]; restored?: R[] };
 async function add<R extends PrinterRecord | FilamentRecord>(kind: 'printer' | 'filament', plan: (doc: LibraryRecords) => Plan<R>): Promise<AddResult> {
@@ -53,9 +54,9 @@ export async function addCatalogPrinters(choices: PrinterChoice[]): Promise<AddR
       const on = (p: PrinterRecord) => p.model === model.id && p.nozzles[0]?.variant === variant.id;
       const have = intent === 'add' ? [...live, ...records, ...restored].find(on) : undefined;
       if (have) { skipped.push(label); existing.push(have.id); chosen.push(have.id); continue; }
-      const removed = intent === 'another' ? undefined : doc.printers.filter((p) => p.archived && on(p) && !live.some((l) => l.name === p.name))
+      const removed = intent === 'another' ? undefined : doc.printers.filter((p) => p.archived && on(p))
         .sort((a, b) => (b.archived?.at ?? 0) - (a.archived?.at ?? 0))[0];
-      if (removed) { const { archived: _a, ...back } = removed; restored.push(back); chosen.push(back.id); continue; }
+      if (removed) { const { archived: _a, ...back } = removed; restored.push({ ...back, name: name(back.name) }); chosen.push(back.id); continue; }
       const record = catalogPrinterSetup({ id: `profile:${randomId()}`, name: name(label), revision: 0, vendor, model: model.id,
         nozzles: Array.from({ length: Math.max(1, variant.extruders) }, () => ({ variant: variant.id, diameter })), slots: [] });
       records.push(record); chosen.push(record.id); wanted.push(label);

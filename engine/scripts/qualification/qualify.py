@@ -156,7 +156,7 @@ def main():
         out = args.output/name
         out.mkdir(exist_ok=True)
         (out/'data').mkdir(exist_ok=True)
-        model_name = 'benchy' if name == 'benchy_flat' else name
+        model_name = case.get('model', 'benchy' if name == 'benchy_flat' else name)
         if model_name == 'benchy':
             model = args.resources/'handy_models'/'3DBenchy.drc'
         else:
@@ -170,7 +170,7 @@ def main():
             subprocess.run(command_prefix + argv, check=True, stdout=stdout, stderr=stderr, env=env)
         if case['audit_checks']:
             audit = [sys.executable, '-I', '-X', 'utf8', str(ROOT/'scripts/nonplanar_bench/print_check.py'), str(out/'out.gcode'),
-                     '--part', name, '--parts', str(ROOT/'fixtures/parts.json'),
+                     '--part', model_name, '--parts', str(ROOT/'fixtures/parts.json'),
                      '--head', str(args.resources/'nonplanar/heads/bambu-a1-mini.json'),
                      '--tool-out', str(out/'tool.json'), '--package', str(out/'out.gcode.3mf'),
                      '--json', str(out/'print_check.json')]
@@ -207,7 +207,8 @@ def main():
         print(name, json.dumps(result['audits'].get(name, result['identity'].get(name, {}))), flush=True)
     if digest(args.tool) != result['binary_sha256'] or resource_digest(args.resources)[0] != resources_hash:
         raise RuntimeError('Engine or resources changed during qualification')
-    result['audits_passed'] = len(result['audits']) == 3 and all(v['ok'] for v in result['audits'].values())
+    expected_audits = {name for name, case in cases.items() if case['audit_checks']}
+    result['audits_passed'] = result['audits'].keys() == expected_audits and all(v['ok'] for v in result['audits'].values())
     result['identity_passed'] = bool(args.reference) and result['identity']['benchy_flat']['gcode']['identity'] != 'diff'
     result['cross_platform'] = bool(args.reference) and result['platform'] != prior['platform']
     result['equivalence_passed'] = bool(args.reference) and all(result['identity'][name]['geometry']['passed'] for name in ['benchy_flat','benchy'])

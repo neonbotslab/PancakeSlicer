@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 	"io"
 	"net/http"
 	"path"
@@ -17,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
 const (
@@ -46,18 +47,24 @@ type parsedPreset struct {
 }
 
 type importRow struct {
-	File      string          `json:"file"`
-	Name      string          `json:"name"`
-	Type      string          `json:"type,omitempty"`
-	Kind      string          `json:"kind,omitempty"`
-	Record    json.RawMessage `json:"record,omitempty"`
-	Status    string          `json:"status"`
-	Basis     string          `json:"basis,omitempty"`
-	NotStored []string        `json:"notStored"`
-	Note      string          `json:"note,omitempty"`
-	Code      string          `json:"code,omitempty"`
-	Physical  any             `json:"physical,omitempty"`
-	Matches   []importMatch   `json:"matches,omitempty"`
+	importRecord
+	File      string        `json:"file"`
+	Name      string        `json:"name"`
+	Type      string        `json:"type,omitempty"`
+	Status    string        `json:"status"`
+	Basis     string        `json:"basis,omitempty"`
+	NotStored []string      `json:"notStored"`
+	Note      string        `json:"note,omitempty"`
+	Code      string        `json:"code,omitempty"`
+	Physical  any           `json:"physical,omitempty"`
+	Matches   []importMatch `json:"matches,omitempty"`
+}
+
+type importRecord struct {
+	Kind            string          `json:"kind,omitempty"`
+	Record          json.RawMessage `json:"record,omitempty"`
+	SourceIDs       []string        `json:"sourceIds,omitempty"`
+	ExportedPrinter bool            `json:"exportedPrinter,omitempty"`
 }
 
 type importMatch struct {
@@ -364,9 +371,11 @@ func uniqueID() string { return newID("profile") }
 func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []importRow {
 	c := s.catalog
 	byName := map[string]*parsedPreset{}
+	hasExportedPrinter := false
 	for i := range presets {
 		p := &presets[i]
 		if p.Type != "" && p.Error == "" {
+			hasExportedPrinter = hasExportedPrinter || p.Type == "machine" && p.Record != nil
 			if _, seen := byName[p.Type+"\x00"+p.Name]; !seen {
 				byName[p.Type+"\x00"+p.Name] = p
 			}
@@ -472,6 +481,17 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 	kinds := map[string]string{"machine": "printer", "filament": "filament", "process": "process"}
 	rows := []importRow{}
 	taken := map[string]*parsedPreset{}
+	claimed := map[string]*parsedPreset{}
+	claim := func(id string, p *parsedPreset) bool {
+		if !strings.HasPrefix(id, "profile:") || id == "profile:" || lib.Printers[id] != nil || lib.Filaments[id] != nil || lib.Processes[id] != nil || lib.Alias[id] != "" {
+			return false
+		}
+		if owner := claimed[id]; owner != nil && owner != p {
+			return false
+		}
+		claimed[id] = p
+		return true
+	}
 	kindLabel := map[string]string{"printer": "printer", "filament": "filament", "process": "print profile"}
 	freeName := func(kind, wanted string) string {
 		name := wanted
@@ -506,6 +526,21 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 			continue
 		}
 		taken[kind+"\x00"+name] = p
+		var source struct {
+			ID      string   `json:"id"`
+			Aliases []string `json:"aliases"`
+		}
+		json.Unmarshal(p.Record, &source)
+		exported := cmpOr(source.ID, p.EditedID)
+		if kind == "filament" || kind == "process" {
+			if strings.HasPrefix(exported, "profile:") {
+				row.SourceIDs = append(row.SourceIDs, exported)
+			}
+			if kind == "filament" {
+				row.SourceIDs = append(row.SourceIDs, source.Aliases...)
+			}
+		}
+		row.ExportedPrinter = kind == "printer" && p.Record != nil
 		decode := func(target string, row importRow) importRow {
 			row.NotStored = append([]string{}, row.NotStored...)
 			skipped := func(note string) importRow {
@@ -538,8 +573,27 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 					return skipped("the record exported with it is incomplete")
 				}
 				delete(record, "archived")
+				if row.Status == "new" && claim(exported, p) {
+					head["id"] = exported
+				}
 				for k, v := range head {
 					record[k] = must(json.Marshal(v))
+				}
+				if kind == "filament" {
+					var aliases []string
+					if current := lib.Filaments[id]; current != nil {
+						aliases = slices.Clone(current.Aliases)
+					}
+					for _, alias := range row.SourceIDs {
+						if alias != head["id"] && !slices.Contains(aliases, alias) && claim(alias, p) {
+							aliases = append(aliases, alias)
+						}
+					}
+					if len(aliases) == 0 {
+						delete(record, "aliases")
+					} else {
+						record["aliases"] = must(json.Marshal(aliases))
+					}
 				}
 				row.Record = must(json.Marshal(record))
 				row.Basis = cmpOr(stringValue(record["product"]), "Auto")
@@ -783,11 +837,7 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 			return row
 		}
 		matches := existing(kind, name)
-		var probe struct {
-			ID string `json:"id"`
-		}
-		json.Unmarshal(p.Record, &probe)
-		own := cmpOr(probe.ID, p.EditedID)
+		own := exported
 		if own == "" || !live(kind, own) {
 			own = ""
 		}
@@ -807,7 +857,9 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 			}
 			alt := decode(target, row)
 			current := stored(kind, target)
-			if alt.Status == "skip" || sameRecordJSON(alt.Record, current) {
+			// Selecting an identical local dependency can still change the printer's reference.
+			distinctSource := hasExportedPrinter && len(row.SourceIDs) > 0 && exported != target
+			if alt.Status == "skip" || !distinctSource && sameRecordJSON(alt.Record, current) {
 				rows = append(rows, edited(alt))
 				break
 			}
@@ -834,8 +886,19 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 			rows = append(rows, edited(decode("", row)))
 		}
 	}
+	// Preview the default choices while retaining the original bundle references for submission.
+	defaults := make([]importRecord, len(rows))
+	for i, r := range rows {
+		if r.Status != "skip" {
+			defaults[i] = r.importRecord
+		}
+	}
+	cleared := remapImportedPrinters(defaults, lib)
 	for i := range rows {
 		r := &rows[i]
+		if cleared[i] {
+			r.Note = strings.TrimPrefix(r.Note+"; "+missingImportProfiles, "; ")
+		}
 		if r.Status != "replace" || r.Record == nil {
 			continue
 		}
@@ -843,11 +906,95 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 			ID string `json:"id"`
 		}
 		json.Unmarshal(r.Record, &probe)
-		if current := stored(r.Kind, probe.ID); current != nil && sameRecordJSON(r.Record, current) {
+		if current := stored(r.Kind, probe.ID); current != nil && sameRecordJSON(defaults[i].Record, current) {
 			r.Status, r.Note = "unchanged", "the same as the library's "+r.Kind+"; nothing to import"
 		}
 	}
 	return rows
+}
+
+const missingImportProfiles = "Some filaments or the print profile weren't in the library or the import, so pick them again"
+
+func remapImportedPrinters(selected []importRecord, lib *resolve.Library) []bool {
+	targets := map[string]map[string]string{"filament": {}, "process": {}}
+	for _, row := range selected {
+		ids := targets[row.Kind]
+		if ids == nil {
+			continue
+		}
+		var record struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(row.Record, &record) != nil || record.ID == "" {
+			continue
+		}
+		for _, source := range row.SourceIDs {
+			if ids[source] == "" {
+				ids[source] = record.ID
+			}
+		}
+	}
+	find := func(kind, id string) string {
+		if target := targets[kind][id]; target != "" {
+			return target
+		}
+		if kind == "filament" {
+			if f := lib.Filament(id); f != nil && f.Live() {
+				return id
+			}
+		} else if p := lib.Processes[id]; p != nil && p.Live() {
+			return id
+		}
+		return ""
+	}
+	cleared := make([]bool, len(selected))
+	for i := range selected {
+		row := &selected[i]
+		if row.Kind != "printer" || !row.ExportedPrinter {
+			continue
+		}
+		var record map[string]json.RawMessage
+		if json.Unmarshal(row.Record, &record) != nil {
+			continue
+		}
+		changed := false
+		var slots []map[string]json.RawMessage
+		if json.Unmarshal(record["slots"], &slots) == nil {
+			slotsChanged := false
+			for _, slot := range slots {
+				id := stringValue(slot["filament"])
+				if id == "" {
+					continue
+				}
+				target := find("filament", id)
+				if target != id {
+					slot["filament"] = must(json.Marshal(target))
+					slotsChanged = true
+					cleared[i] = cleared[i] || target == ""
+				}
+			}
+			if slotsChanged {
+				record["slots"] = must(json.Marshal(slots))
+				changed = true
+			}
+		}
+		if id := stringValue(record["process"]); id != "" {
+			target := find("process", id)
+			if target != id {
+				if target == "" {
+					delete(record, "process")
+					cleared[i] = true
+				} else {
+					record["process"] = must(json.Marshal(target))
+				}
+				changed = true
+			}
+		}
+		if changed {
+			row.Record = must(json.Marshal(record))
+		}
+	}
+	return cleared
 }
 
 func orcaText(raw json.RawMessage) any {
@@ -1055,6 +1202,22 @@ func (s *Server) libraryIORoutes(mux *http.ServeMux) {
 			decoded = append(decoded, s.decodeProject(name, projectData[i], lib))
 		}
 		writeJSON(w, 200, map[string]any{"rows": s.planImport(presets, lib), "projects": decoded, "revision": lib.Revision})
+	})
+	mux.HandleFunc("POST /api/library/import/resolve", func(w http.ResponseWriter, r *http.Request) {
+		var records []importRecord
+		if !workspaceDecode(w, r, &records) {
+			return
+		}
+		lib, err := s.libraryDocument()
+		if err != nil {
+			libraryFailure(w, 503, "library_unavailable", "Oops! Couldn't read profiles.", "retry_storage", 0)
+			return
+		}
+		var problems []string
+		if slices.Contains(remapImportedPrinters(records, lib), true) {
+			problems = append(problems, missingImportProfiles)
+		}
+		writeJSON(w, 200, map[string]any{"records": records, "problems": problems})
 	})
 	mux.HandleFunc("POST /api/library/export", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {

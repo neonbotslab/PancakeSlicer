@@ -70,10 +70,11 @@ export async function resetDemo() {
   next.session = { revision: 0, document: { demoOnboarding: true } };
   stateRead = Promise.resolve(next); save(next);
 }
+// Firefox has no Request.body, so read the payload through blob() in every browser.
 async function body(request: Request): Promise<Row> {
-  if (!request.body) return {};
+  const blob = await request.blob();
   const text = request.headers.get('content-encoding') === 'gzip'
-    ? await new Response(request.body.pipeThrough(new DecompressionStream('gzip'))).text() : await request.text();
+    ? await new Response(blob.stream().pipeThrough(new DecompressionStream('gzip'))).text() : await blob.text();
   return text ? JSON.parse(text) : {};
 }
 function version(s: DemoState, id: string) {

@@ -8,6 +8,7 @@
 #include "libslic3r/Exception.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
+#include "libslic3r/GCode/ConformalTravel.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/libslic3r.h"
 #include "CurvedTopsSurface.hpp"
@@ -72,6 +73,8 @@ NonplanarClearanceModel NonplanarClearanceModel::from_print(const PrintConfig &c
         }
     }
     for (const auto &[bottom, r] : radius) out.nozzle.push_back({bottom, r});
+    if (out.nozzle.empty())
+        out.nozzle.push_back({out.contact_allowance_mm, Nonplanar::nozzle_land(head).boxes.front().max.x()});
     return out;
 }
 

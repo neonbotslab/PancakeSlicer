@@ -129,6 +129,7 @@
 #include "TriangleMesh.hpp"
 #include "BeltBrim.hpp"
 #include "libslic3r/WaveOverhangs/WaveOverhangs.hpp"
+#include "ZRivets.hpp"
 
 namespace Slic3r { enum class EnforcerBlockerType : int8_t; }
 
@@ -768,6 +769,8 @@ void PrintObject::infill()
             }
         );
         m_print->throw_if_canceled();
+        plan_z_rivets(*this);
+        m_print->throw_if_canceled();
         BOOST_LOG_TRIVIAL(debug) << "Filling layers in parallel - end";
         this->set_done(posInfill);
     }
@@ -958,27 +961,23 @@ void PrintObject::nonplanar_shells()
 TriangleMesh PrintObject::object_frame_mesh(double &ground_offset) const
 {
     TriangleMesh mesh = m_model_object->raw_mesh();
-    TriangleMesh negative;
     for (const ModelVolume *volume : m_model_object->volumes)
         if (volume->is_negative_volume()) {
             TriangleMesh vm = volume->mesh();
             vm.transform(volume->get_matrix());
-            negative.merge(vm);
+            try {
+                MeshBoolean::cgal::minus(mesh, vm);
+            } catch (const std::exception &e) {
+                std::vector<TriangleMesh> parts;
+                MeshBoolean::mcut::make_boolean(mesh, vm, parts, "A_NOT_B");
+                TriangleMesh cut;
+                for (const TriangleMesh &part : parts)
+                    cut.merge(part);
+                BOOST_LOG_TRIVIAL(warning) << "Non-planar: negative volumes of " << m_model_object->name << " cut with mcut (" << e.what() << ")";
+                if (! cut.empty())
+                    mesh = std::move(cut);
+            }
         }
-    if (! negative.empty()) {
-        try {
-            MeshBoolean::cgal::minus(mesh, negative);
-        } catch (const std::exception &e) {
-            std::vector<TriangleMesh> parts;
-            MeshBoolean::mcut::make_boolean(mesh, negative, parts, "A_NOT_B");
-            TriangleMesh cut;
-            for (const TriangleMesh &part : parts)
-                cut.merge(part);
-            BOOST_LOG_TRIVIAL(warning) << "Non-planar: negative volumes of " << m_model_object->name << " cut with mcut (" << e.what() << ")";
-            if (! cut.empty())
-                mesh = std::move(cut);
-        }
-    }
     const ModelInstance *inst = m_instances.front().model_instance;
     Geometry::Transformation trans = inst->get_transformation();
     trans.set_offset(Vec3d(-unscale<double>(m_center_offset.x()), -unscale<double>(m_center_offset.y()), 0));
@@ -1212,10 +1211,48 @@ SupportMaterialStyle PrintObject::tree_default_style() const
     return check_object_layers_fixed(this->slicing_parameters(), profile) ? smsTreeOrganic : smsTreeSlim;
 }
 
-void PrintObject::generate_support_material(bool with_belt_brim)
+Polygons PrintObject::support_neighbor_footprint(coordf_t bottom_z, coordf_t top_z, coord_t gap_xy) const
+{
+    return m_support_neighbors ? m_support_neighbors->polygons(*this, bottom_z, top_z, gap_xy) : Polygons{};
+}
+
+void PrintObject::trim_support_paths_by_neighbors(const SupportNeighborFootprints &neighbors)
+{
+    if (neighbors.empty() || m_support_layers.empty())
+        return;
+
+    const coord_t bead_radius = std::max({support_material_flow(this).scaled_width(),
+        support_material_interface_flow(this).scaled_width(), support_material_1st_layer_flow(this).scaled_width()}) / 2;
+    const coord_t clearance = std::max(scaled<coord_t>(m_config.support_object_xy_distance.value),
+                                       bead_radius + coord_t(SCALED_EPSILON));
+    // Raft expansion and tree smoothing also produce paths outside their routing masks.
+    tbb::parallel_for(size_t(0), m_support_layers.size(), [&](size_t i) {
+        this->throw_if_canceled();
+        SupportLayer &layer = *m_support_layers[i];
+        if (layer.support_fills.empty())
+            return;
+        const Polygons footprint = neighbors.polygons(*this, layer.bottom_z(), layer.print_z, clearance);
+        if (footprint.empty())
+            return;
+        const ExPolygons mask = union_ex(footprint);
+        Nonplanar::clip_extrusions(layer.support_fills, mask, get_extents(mask));
+        layer.support_islands = diff_ex(layer.support_islands, mask);
+        if (!layer.lslices.empty()) {
+            layer.lslices = diff_ex(layer.lslices, mask);
+            layer.lslices_bboxes.clear();
+            for (const ExPolygon &slice : layer.lslices)
+                layer.lslices_bboxes.push_back(get_extents(slice));
+        }
+    });
+}
+
+void PrintObject::generate_support_material(bool with_belt_brim, const SupportNeighborFootprints *neighbors)
 {
     if (this->set_started(posSupportMaterial)) {
+        m_support_neighbors = neighbors && !neighbors->empty() ? neighbors : nullptr;
+        ScopeGuard clear_neighbors([this] { m_support_neighbors = nullptr; });
         this->clear_support_layers();
+        m_tree_support_preview_cache.reset();
         NonplanarSupportView nonplanar_support_view(m_layers);
         auto apply_auto_support = [this](bool critical_only, SupportMaterialStyle style) {
             if (!m_auto_support_applied) {
@@ -1316,6 +1353,8 @@ void PrintObject::generate_support_material(bool with_belt_brim)
             }
             if (m_multiplanar)
                 Nonplanar::clear_route_support(*this, *m_multiplanar);
+            if (m_support_neighbors)
+                this->trim_support_paths_by_neighbors(*m_support_neighbors);
             if (m_auto_support_applied) {
                 double volume = 0.;
                 for (const SupportLayer *layer : m_support_layers)
@@ -2256,7 +2295,9 @@ bool PrintObject::invalidate_state_by_config_options(
                    || opt_key == "skeleton_infill_density"
                    || opt_key == "skin_infill_density"
                    || opt_key == "infill_lock_depth"
-                   || opt_key == "skin_infill_depth") {
+                   || opt_key == "skin_infill_depth"
+                   || opt_key == "z_rivets"
+                   || opt_key == "z_rivet_span") {
             steps.emplace_back(posPrepareInfill);
         } else if (opt_key == "sparse_infill_density") {
             const auto *old_density = old_config.option<ConfigOptionPercent>(opt_key);
@@ -2390,6 +2431,9 @@ bool PrintObject::invalidate_state_by_config_options(
 
 bool PrintObject::invalidate_step(PrintObjectStep step)
 {
+    // Native tree support is built into the curved paths during posNonplanar.
+    if (step == posSupportMaterial && m_native_field && is_tree(m_config.support_type.value))
+        step = posSlice;
     if (curved_tops_mode(m_config.nonplanar_mode.value) &&
         step >= posPrepareInfill && step <= posNonplanar && is_step_done(posNonplanarProjection))
         step = posPerimeters;
@@ -2946,8 +2990,12 @@ PrintObject::detect_nonplanar_surfaces()
         BOOST_LOG_TRIVIAL(trace) << "detect_nonplanar_surfaces for region " << region_id;
         const PrintRegion &region = this->printing_region(region_id);
 
+        std::optional<double> planar_ironing_from_z;
+        if (!m_layers.empty() && Layer::choose_ironing_extruder(region.config(), m_print->config().spiral_mode, true) >= 0)
+            planar_ironing_from_z = region.config().ironing_type == IroningType::TopmostOnly ?
+                m_layers.back()->slice_z : m_layers.front()->slice_z;
         for (const auto& nonplanar_surface: this->nonplanar_surfaces()) {
-            ExPolygons raw_projection = nonplanar_surface.horizontal_projection();
+            ExPolygons raw_projection = nonplanar_surface.horizontal_projection(planar_ironing_from_z);
             if (const auto *repair = nonplanar_repair(); repair != nullptr) {
                 Polygons struck;
                 for (const auto &disc : repair->planar) {
@@ -2996,15 +3044,23 @@ PrintObject::detect_nonplanar_surfaces()
                             Layer* upper_layer = layer->upper_layer;
                             LayerRegion &upper_layerm = *upper_layer->m_regions[region_id];
                             Surfaces upper_surfaces = upper_layerm.slices.surfaces;
+                            ExPolygons exposed = intersection_ex(
+                                projection,
+                                union_ex(
+                                    diff_ex(
+                                        layerm_slices_surfaces,
+                                        upper_surfaces,
+                                        ApplySafetyOffset::No)),
+                                ApplySafetyOffset::No);
+                            // Another region above (a second part or painted colour) covers this one: it is no top there.
+                            Polygons other_regions;
+                            for (size_t other = 0; other < upper_layer->region_slices_before_nonplanar.size(); ++other)
+                                if (other != region_id)
+                                    polygons_append(other_regions, to_polygons(upper_layer->region_slices_before_nonplanar[other]));
+                            if (!exposed.empty() && !other_regions.empty())
+                                exposed = diff_ex(exposed, other_regions, ApplySafetyOffset::No);
                             topNonplanar.append(
-                                intersection_ex(
-                                    projection,
-                                    union_ex(
-                                        diff_ex(
-                                            layerm_slices_surfaces,
-                                            upper_surfaces,
-                                            ApplySafetyOffset::No)),
-                                    ApplySafetyOffset::No),
+                                std::move(exposed),
                                 (shell_thickness == 0 ? stTopNonplanar : stInternalSolidNonplanar),
                                 distance_to_top
                             );
@@ -3046,9 +3102,12 @@ PrintObject::detect_nonplanar_surfaces()
                         }
 
                         if (topNonplanar.size() > 0) {
+                            BoundingBox claim;
+                            for (const Surface &piece : topNonplanar.surfaces)
+                                claim.merge(get_extents(piece.expolygon));
                             Polygons owned;
                             for (const Surface &s : layerm_slices_surfaces)
-                                if (s.is_nonplanar())
+                                if (s.is_nonplanar() && claim.overlap(get_extents(s.expolygon)))
                                     polygons_append(owned, to_polygons(s.expolygon));
                             if (! owned.empty()) {
                                 owned = union_(owned);
@@ -5913,29 +5972,35 @@ void PrintObject::project_and_append_custom_facets(
         bool seam, EnforcerBlockerType type, std::vector<Polygons>& out, std::vector<std::pair<Vec3f, Vec3f>>* vertical_points) const
 {
     const Transform3d object_trafo = this->trafo_sliced();
+    auto project_support_facets = [&](const indexed_triangle_set &facets, const Transform3d &trafo) {
+        if (facets.indices.empty())
+            return;
+        std::vector<Polygons> projected;
+        slice_mesh_slabs(facets, zs_from_layers(this->layers()), trafo, nullptr, &projected, vertical_points, [](){});
+        assert(! projected.empty());
+        assert(out.empty() || out.size() == projected.size());
+        if (out.empty())
+            out = std::move(projected);
+        else
+            for (size_t i = 0; i < out.size(); ++i)
+                append(out[i], std::move(projected[i]));
+    };
     for (const ModelVolume* mv : this->model_object()->volumes)
         if (mv->is_model_part()) {
             const indexed_triangle_set custom_facets = seam
                     ? mv->seam_facets.get_facets_strict(*mv, type)
                     : mv->supported_facets.get_facets_strict(*mv, type);
-            if (! custom_facets.indices.empty()) {
-                if (seam)
+            const Transform3d volume_trafo = object_trafo * mv->get_matrix();
+            if (seam) {
+                if (!custom_facets.indices.empty())
                     project_triangles_to_slabs(this->layers(), custom_facets,
-                        (object_trafo * mv->get_matrix()).cast<float>(),
-                        seam, out);
-                else {
-                    std::vector<Polygons> projected;
-                    slice_mesh_slabs(custom_facets, zs_from_layers(this->layers()), object_trafo * mv->get_matrix(), nullptr, &projected, vertical_points, [](){});
-                    assert(! projected.empty());
-                    assert(out.empty() || out.size() == projected.size());
-                    if (out.empty())
-                        out = std::move(projected);
-                    else
-                        for (size_t i = 0; i < out.size(); ++ i)
-                            append(out[i], std::move(projected[i]));
-                }
-            }
+                        volume_trafo.cast<float>(), seam, out);
+            } else
+                project_support_facets(custom_facets, volume_trafo);
         }
+    if (!seam)
+        if (const auto *facets = Nonplanar::NativeSliceOverride::support_facets(this->model_object()->name, type))
+            project_support_facets(*facets, object_trafo);
     if (! seam && type == EnforcerBlockerType::BLOCKER && m_conformal &&
         (! m_conformal->self_supported.empty() || ! m_conformal->flat_printed.empty() || ! m_conformal->bridged.empty())) {
         std::vector<Polygons> enforcers = this->slice_support_enforcers();

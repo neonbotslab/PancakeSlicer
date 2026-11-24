@@ -12,6 +12,8 @@ on:
       runner: {type: string, required: true}
       tag: {type: string, required: true}
       publish: {type: boolean, required: true}
+      engine-artifact: {type: string, default: ''}
+      reference-artifact: {type: string, default: ''}
     secrets:
       DOCKERHUB_USERNAME: {required: false}
       DOCKERHUB_TOKEN: {required: false}
@@ -24,6 +26,7 @@ env:
   TAG: ${{ inputs.tag }}
   PUBLISH: ${{ inputs.publish }}
   CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  PREBUILT_ARTIFACT_DIR: build-native/prebuilt
   PYTHONUTF8: '1'
 
 jobs:
@@ -70,6 +73,18 @@ jobs:
       - name: Name the prebuilt assets
         id: keys
         run: .github/scripts/build/keys.sh ${{ inputs.target }} ${{ inputs.os }}
+      - name: Download new engine prebuilts
+        if: inputs.engine-artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ inputs.engine-artifact }}
+          path: ${{ env.PREBUILT_ARTIFACT_DIR }}
+      - name: Download the new reference
+        if: inputs.reference-artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ inputs.reference-artifact }}
+          path: ${{ env.PREBUILT_ARTIFACT_DIR }}
       - name: Fetch the engine, its dependencies and the reference
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,8 +94,8 @@ jobs:
           .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.reference }}" desktop/build/reference
       - name: Build web UI and desktop shell dependencies
         run: |
-          npm ci --prefix web
-          npm ci --prefix desktop
+          npm ci --prefix web --no-audit --no-fund
+          npm ci --prefix desktop --no-audit --no-fund
           if [ "$PUBLISH" = true ]; then
             npm pkg set version="${TAG#v}" --prefix desktop
             npm pkg set version="${TAG#v}" --prefix web
