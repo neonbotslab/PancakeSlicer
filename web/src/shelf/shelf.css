@@ -426,6 +426,11 @@
   padding-bottom: var(--s-2);
 }
 
+.shelf-tile-status [role='alert'] {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .shelf-shimmer {
   position: absolute;
   inset: 0;

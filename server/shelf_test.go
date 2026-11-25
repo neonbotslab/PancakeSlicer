@@ -199,7 +199,7 @@ func TestShelfZIPFoldersDedupAndThumbnails(t *testing.T) {
 	}
 }
 func TestShelfZIPRejectsUnsafeEntriesAtomically(t *testing.T) {
-	for _, name := range []string{"../escape.stl", "/absolute.stl", "folder/../escape.stl", "C:/escape.stl", "folder\\escape.stl", "folder//escape.stl", "./escape.stl"} {
+	for _, name := range []string{"../escape.stl", "/absolute.stl", "folder/../escape.stl", "C:/escape.stl", "folder\\escape.stl", "folder//escape.stl", "./escape.stl", "__MACOSX/../escape.stl"} {
 		t.Run(name, func(t *testing.T) {
 			s, h := shelfFixture(t)
 			w := shelfUpload(t, h, 0, "", map[string][]byte{"unsafe.zip": shelfZIP(t, map[string][]byte{"safe.stl": []byte(shelfTestSTL), name: []byte(shelfTestSTL)})})
@@ -214,7 +214,7 @@ func TestShelfZIPRejectsUnsafeEntriesAtomically(t *testing.T) {
 		s, h := shelfFixture(t)
 		var body bytes.Buffer
 		z := zip.NewWriter(&body)
-		header := &zip.FileHeader{Name: "link.stl", Method: zip.Store}
+		header := &zip.FileHeader{Name: "__MACOSX/link.stl", Method: zip.Store}
 		header.SetMode(os.ModeSymlink | 0777)
 		f, _ := z.CreateHeader(header)
 		f.Write([]byte("target"))
@@ -244,18 +244,26 @@ func TestShelfZIPLimits(t *testing.T) {
 		status  int
 	}{
 		{"count", shelfLimits{FileBytes: 1024, TotalBytes: 4096, Entries: 1, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL), "two.stl": []byte(shelfTestSTL)}, 413},
-		{"wrapper count", shelfLimits{FileBytes: 1024, TotalBytes: 4096, Entries: 1, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL)}, 413},
+		{"single file", shelfLimits{FileBytes: 1024, TotalBytes: 4096, Entries: 1, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL)}, 0},
 		{"file", shelfLimits{FileBytes: 8, TotalBytes: 4096, Entries: 10, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL)}, 413},
 		{"total", shelfLimits{FileBytes: 1024, TotalBytes: int64(len(shelfTestSTL) + 1), Entries: 10, Ratio: 200}, map[string][]byte{"one.stl": []byte(shelfTestSTL), "two.stl": []byte(shelfTestSTL)}, 413},
-		{"ratio", shelfLimits{FileBytes: 1 << 20, TotalBytes: 2 << 20, Entries: 10, Ratio: 10}, map[string][]byte{"bomb.txt": bytes.Repeat([]byte("a"), 65536)}, 413},
+		{"metadata ratio", shelfLimits{FileBytes: 1 << 20, TotalBytes: 2 << 20, Entries: 10, Ratio: 10}, map[string][]byte{".metadata": bytes.Repeat([]byte("a"), 65536)}, 413},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			file := filepath.Join(dir, "models.zip")
-			os.WriteFile(file, shelfZIP(t, tc.entries), 0600)
+			if err := os.WriteFile(file, shelfZIP(t, tc.entries), 0600); err != nil {
+				t.Fatal(err)
+			}
 			batch := shelfImportBatch{}
 			err := batch.expandZIP(t.Context(), file, "models.zip", dir, tc.limits)
+			if tc.status == 0 {
+				if err != nil || len(batch.groups) != 1 || len(batch.groups[0].files) != 1 {
+					t.Fatalf("expected one imported file, got %+v, error %v", batch.groups, err)
+				}
+				return
+			}
 			failure, ok := err.(*shelfError)
 			if !ok || failure.Status != tc.status {
 				t.Fatalf("error %v", err)
@@ -545,7 +553,7 @@ func TestShelfZIPMaximumFolderDepth(t *testing.T) {
 func TestShelfLimitsImplicitFolderExpansion(t *testing.T) {
 	s, h := shelfFixture(t)
 	entries := map[string][]byte{}
-	for i := 0; i < 65; i++ {
+	for i := 0; i < 3125; i++ {
 		folder := fmt.Sprintf("branch-%d/", i) + strings.Repeat("nested/", 30)
 		entries[folder+"part.stl"] = []byte(shelfTestSTL)
 	}

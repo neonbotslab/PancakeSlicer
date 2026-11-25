@@ -18,6 +18,13 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	shelfUploadMaxBytes = 2 << 30
+	shelfMaxUploadParts = 10_000
+	shelfMaxZIPRecords  = 65_535
+	shelfMaxTreeNodes   = 100_000
+)
+
 type shelfLimits struct {
 	RequestBytes, FileBytes, TotalBytes int64
 	Entries                             int
@@ -25,12 +32,15 @@ type shelfLimits struct {
 }
 
 func shelfUploadLimits(c Config) shelfLimits {
-	request := c.MaxUploadSize
-	if request <= 0 {
-		request = 512 << 20
+	payload := c.ShelfMaxUploadSize
+	if payload <= 0 {
+		payload = c.MaxUploadSize
 	}
-	request = min(request, 512<<20)
-	return shelfLimits{RequestBytes: request, FileBytes: min(request, 128<<20), TotalBytes: 512 << 20, Entries: 2048, Ratio: 200}
+	if payload <= 0 {
+		payload = shelfUploadMaxBytes
+	}
+	payload = min(payload, shelfUploadMaxBytes)
+	return shelfLimits{RequestBytes: payload + (1 << 20), FileBytes: payload, TotalBytes: 8 << 30, Entries: 10_000, Ratio: 200}
 }
 func shelfModelFormat(ext string) bool {
 	switch ext {
@@ -66,10 +76,17 @@ type shelfImportGroup struct {
 	folders []string
 }
 type shelfImportBatch struct {
-	groups  []shelfImportGroup
-	skipped []shelfSkipped
-	total   int64
-	entries int
+	groups     []shelfImportGroup
+	skipped    []shelfSkipped
+	total      int64
+	entries    int
+	zipRecords int
+}
+
+type shelfZIPEntry struct {
+	file     *zip.File
+	relative string
+	ignored  bool
 }
 
 func shelfArchivePath(name string, dir bool) (string, error) {
@@ -94,18 +111,23 @@ func shelfArchivePath(name string, dir bool) (string, error) {
 	}
 	return strings.Join(pieces, "/"), nil
 }
-func (b *shelfImportBatch) addEntry(limits shelfLimits) error {
-	b.entries++
-	if b.entries > limits.Entries {
-		return shelfProblem(413, "zip_entry_limit", "The upload contains too many entries.")
+func shelfIgnoredZIPPath(relative string) bool {
+	for component := range strings.SplitSeq(relative, "/") {
+		if strings.HasPrefix(component, ".") || component == "__MACOSX" {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *shelfImportBatch) addEntries(n, limit int) error {
+	b.entries += n
+	if b.entries > limit {
+		return shelfProblem(413, "zip_entry_limit", fmt.Sprintf("The upload contains %d files. The limit is %d.", b.entries, limit))
 	}
 	return nil
 }
-func (b *shelfImportBatch) readFile(ctx context.Context, src io.Reader, dst string, limits shelfLimits) (int64, error) {
-	if limits.TotalBytes-b.total < 0 {
-		return 0, shelfProblem(413, "upload_total_limit", "The upload exceeds its total expanded size limit.")
-	}
-	limit := min(limits.FileBytes, limits.TotalBytes-b.total)
+func readShelfUploadFile(ctx context.Context, src io.Reader, dst string, limit int64) (int64, error) {
 	var out io.Writer = io.Discard
 	var file *os.File
 	var err error
@@ -121,92 +143,111 @@ func (b *shelfImportBatch) readFile(ctx context.Context, src io.Reader, dst stri
 		err = errors.Join(err, file.Close())
 	}
 	if n > limit {
-		return 0, shelfProblem(413, "upload_size_limit", "A file or the total expanded upload exceeds its size limit.")
+		return 0, shelfProblem(413, "upload_size_limit", fmt.Sprintf("The file exceeds the remaining upload limit of %d bytes.", limit))
 	}
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return 0, shelfProblem(413, "upload_request_limit", "The upload exceeds the server request size limit.")
+			return 0, shelfProblem(413, "upload_request_limit", fmt.Sprintf("The upload exceeds the %d-byte server request limit.", tooLarge.Limit))
 		}
 		return 0, shelfProblem(400, "upload_invalid", "The upload is interrupted or has invalid archive contents.")
 	}
-	b.total += n
 	return n, nil
 }
 func (b *shelfImportBatch) expandZIP(ctx context.Context, file, name, dir string, limits shelfLimits) error {
-	if err := b.addEntry(limits); err != nil {
-		return err
-	}
 	base := strings.TrimSpace(strings.TrimSuffix(name, path.Ext(name)))
 	if !shelfName(base) {
 		base = name
 	}
 	group := shelfImportGroup{name: base}
-	f, err := os.Open(file)
+	archive, err := os.Open(file)
 	if err != nil {
 		return err
 	}
-	info, err := f.Stat()
-	if err == nil {
-		err = shelfZIPDirectory(f, info.Size(), limits.Entries-b.entries)
+	defer archive.Close()
+	info, err := archive.Stat()
+	if err != nil {
+		return err
 	}
-	err = errors.Join(err, f.Close())
+	recordsRemaining := shelfMaxZIPRecords - b.zipRecords
+	metadataLimitMessage := fmt.Sprintf("ZIP metadata exceeds the limit of %d records per upload or %d MiB per archive.", shelfMaxZIPRecords, shelfZIPDirectoryMaxBytes>>20)
+	err = shelfZIPDirectory(archive, info.Size(), recordsRemaining)
 	if errors.Is(err, errShelfMeshLimit) {
-		return shelfProblem(413, "zip_entry_limit", "The ZIP exceeds its entry count or directory size limit.")
+		return shelfProblem(413, "zip_metadata_limit", metadataLimitMessage)
 	}
 	if err != nil {
 		return shelfProblem(400, "zip_invalid", "The ZIP archive is invalid.")
 	}
-	z, err := zip.OpenReader(file)
+	z, err := zip.NewReader(archive, info.Size())
 	if err != nil {
 		return shelfProblem(400, "zip_invalid", "The ZIP archive is invalid.")
 	}
-	defer z.Close()
-	if len(z.File) > limits.Entries-b.entries {
-		return shelfProblem(413, "zip_entry_limit", "The upload contains too many ZIP entries.")
+	if len(z.File) > recordsRemaining {
+		return shelfProblem(413, "zip_metadata_limit", metadataLimitMessage)
 	}
-	var declared uint64
+	firstRecord := b.zipRecords
+	b.zipRecords += len(z.File)
+	entries := make([]shelfZIPEntry, 0, len(z.File))
+	declared := uint64(b.total)
+	eligibleCount := 0
 	for _, f := range z.File {
-		if err = b.addEntry(limits); err != nil {
-			return err
-		}
-		relative, err := shelfArchivePath(f.Name, f.FileInfo().IsDir())
+		mode := f.Mode()
+		relative, err := shelfArchivePath(f.Name, mode.IsDir())
 		if err != nil {
 			return err
 		}
-		mode := f.Mode()
-		if mode&os.ModeSymlink != 0 || !mode.IsRegular() && !mode.IsDir() {
+		if mode.Type() != 0 && mode.Type() != os.ModeDir {
 			return shelfProblem(400, "zip_entry_type", "ZIP symlinks and special files are not allowed.")
 		}
-		if f.UncompressedSize64 > uint64(limits.FileBytes) || f.UncompressedSize64 > uint64(limits.TotalBytes)-declared {
-			return shelfProblem(413, "zip_size_limit", "The ZIP exceeds its file or total expanded size limit.")
+		if f.UncompressedSize64 > uint64(limits.FileBytes) {
+			return shelfProblem(413, "zip_size_limit", fmt.Sprintf("A ZIP file exceeds the expanded file limit of %d bytes.", limits.FileBytes))
+		}
+		if f.UncompressedSize64 > uint64(limits.TotalBytes)-declared {
+			return shelfProblem(413, "zip_size_limit", fmt.Sprintf("ZIP expansion exceeds the upload limit of %d bytes.", limits.TotalBytes))
 		}
 		declared += f.UncompressedSize64
 		if f.UncompressedSize64 > 0 && (f.CompressedSize64 == 0 || f.UncompressedSize64/f.CompressedSize64 > limits.Ratio || f.UncompressedSize64/f.CompressedSize64 == limits.Ratio && f.UncompressedSize64%f.CompressedSize64 > 0) {
-			return shelfProblem(413, "zip_ratio_limit", "A ZIP entry exceeds the decompression ratio limit.")
+			return shelfProblem(413, "zip_ratio_limit", fmt.Sprintf("A ZIP entry exceeds the %d:1 decompression ratio limit.", limits.Ratio))
 		}
+		ignored := shelfIgnoredZIPPath(relative)
 		if mode.IsDir() {
-			group.folders = append(group.folders, relative)
+			if !ignored {
+				group.folders = append(group.folders, relative)
+			}
 			continue
 		}
-		group.folders = append(group.folders, path.Dir(relative))
+		if !ignored {
+			eligibleCount++
+			group.folders = append(group.folders, path.Dir(relative))
+		}
+		entries = append(entries, shelfZIPEntry{file: f, relative: relative, ignored: ignored})
+	}
+	if err := b.addEntries(eligibleCount, limits.Entries); err != nil {
+		return err
+	}
+	for i, entry := range entries {
+		f, relative := entry.file, entry.relative
 		ext := strings.ToLower(path.Ext(relative))
-		keep := shelfModelFormat(ext)
+		keep := !entry.ignored && shelfModelFormat(ext)
 		dst := ""
 		if keep {
-			dst = filepath.Join(dir, fmt.Sprintf("entry-%d%s", b.entries, ext))
+			dst = filepath.Join(dir, fmt.Sprintf("entry-%d%s", firstRecord+i, ext))
 		}
 		r, err := f.Open()
 		if err != nil {
 			return shelfProblem(400, "zip_invalid", "A ZIP entry cannot be read.")
 		}
-		n, readErr := b.readFile(ctx, r, dst, limits)
+		n, readErr := readShelfUploadFile(ctx, r, dst, min(limits.FileBytes, limits.TotalBytes-b.total))
 		closeErr := r.Close()
 		if readErr != nil {
 			return readErr
 		}
 		if closeErr != nil || uint64(n) != f.UncompressedSize64 {
 			return shelfProblem(400, "zip_invalid", "A ZIP entry has invalid contents or size.")
+		}
+		b.total += n
+		if entry.ignored {
+			continue
 		}
 		source := name + "/" + relative
 		if keep {
@@ -221,6 +262,7 @@ func (b *shelfImportBatch) expandZIP(ctx context.Context, file, name, dir string
 
 func (b *shelfImportBatch) prepareTree(parentDepth, limit int) error {
 	entries := 0
+	limitMessage := fmt.Sprintf("The Shelf tree exceeds the limit of %d folders and models per upload.", limit)
 	for i := range b.groups {
 		group := &b.groups[i]
 		entries += len(group.files)
@@ -228,7 +270,7 @@ func (b *shelfImportBatch) prepareTree(parentDepth, limit int) error {
 			entries++
 		}
 		if entries > limit {
-			return shelfProblem(413, "upload_tree_limit", "The expanded folder and model tree exceeds its entry limit.")
+			return shelfProblem(413, "upload_tree_limit", limitMessage)
 		}
 		if group.name == "" {
 			continue
@@ -251,7 +293,7 @@ func (b *shelfImportBatch) prepareTree(parentDepth, limit int) error {
 			}
 			entries++
 			if entries > limit {
-				return shelfProblem(413, "upload_tree_limit", "The expanded folder and model tree exceeds its entry limit.")
+				return shelfProblem(413, "upload_tree_limit", limitMessage)
 			}
 			seen[folder] = true
 			folders = append(folders, folder)
@@ -273,6 +315,11 @@ func (s *Server) uploadShelf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limits := shelfUploadLimits(s.cfg)
+	requestLimitMessage := fmt.Sprintf("The upload exceeds the %d-byte server request limit.", limits.RequestBytes)
+	if r.ContentLength > limits.RequestBytes {
+		shelfFail(w, shelfProblem(413, "upload_request_limit", requestLimitMessage))
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, limits.RequestBytes)
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -302,6 +349,7 @@ func (s *Server) uploadShelf(w http.ResponseWriter, r *http.Request) {
 	batch := shelfImportBatch{skipped: []shelfSkipped{}}
 	var parts []shelfUploadPart
 	partCount := 0
+	payloadRemaining := limits.FileBytes
 	for {
 		part, err := reader.NextPart()
 		if err == io.EOF {
@@ -310,15 +358,15 @@ func (s *Server) uploadShelf(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				shelfFail(w, shelfProblem(413, "upload_request_limit", "The upload exceeds the server request size limit."))
+				shelfFail(w, shelfProblem(413, "upload_request_limit", requestLimitMessage))
 			} else {
 				shelfFail(w, shelfProblem(400, "multipart_invalid", "The multipart upload is invalid."))
 			}
 			return
 		}
 		partCount++
-		if partCount > limits.Entries {
-			shelfFail(w, shelfProblem(413, "upload_entry_limit", "The upload contains too many parts."))
+		if partCount > shelfMaxUploadParts {
+			shelfFail(w, shelfProblem(413, "upload_entry_limit", fmt.Sprintf("The upload exceeds the limit of %d multipart parts.", shelfMaxUploadParts)))
 			return
 		}
 		_, params, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
@@ -328,44 +376,28 @@ func (s *Server) uploadShelf(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ext := strings.ToLower(filepath.Ext(name))
-		dst := filepath.Join(dir, fmt.Sprintf("part-%d%s", partCount, ext))
-		if ext == ".zip" {
-			f, err := os.Create(dst)
-			if err != nil {
+		archive := ext == ".zip"
+		if !archive {
+			if err = batch.addEntries(1, limits.Entries); err != nil {
 				shelfFail(w, err)
 				return
 			}
-			n, copyErr := io.Copy(f, io.LimitReader(part, limits.RequestBytes+1))
-			copyErr = errors.Join(copyErr, f.Close())
-			if n > limits.RequestBytes {
-				shelfFail(w, shelfProblem(413, "upload_request_limit", "The ZIP exceeds the request size limit."))
-				return
-			}
-			if copyErr != nil {
-				var tooLarge *http.MaxBytesError
-				if errors.As(copyErr, &tooLarge) {
-					shelfFail(w, shelfProblem(413, "upload_request_limit", "The upload exceeds the request size limit."))
-				} else {
-					shelfFail(w, shelfProblem(400, "upload_invalid", "The upload did not finish."))
-				}
-				return
-			}
+		}
+		dst := ""
+		if archive || shelfModelFormat(ext) {
+			dst = filepath.Join(dir, fmt.Sprintf("part-%d%s", partCount, ext))
+		}
+		n, err := readShelfUploadFile(r.Context(), part, dst, payloadRemaining)
+		if err != nil {
+			shelfFail(w, err)
+			return
+		}
+		payloadRemaining -= n
+		if archive {
 			parts = append(parts, shelfUploadPart{archive: true, name: name, file: shelfImportFile{file: dst}})
 		} else {
-			if err = batch.addEntry(limits); err != nil {
-				shelfFail(w, err)
-				return
-			}
-			target := dst
-			if !shelfModelFormat(ext) {
-				target = ""
-			}
-			n, err := batch.readFile(r.Context(), part, target, limits)
-			if err != nil {
-				shelfFail(w, err)
-				return
-			}
-			if target == "" {
+			batch.total += n
+			if dst == "" {
 				batch.skipped = append(batch.skipped, shelfSkipped{Path: name, Reason: "unsupported model format"})
 			} else {
 				parts = append(parts, shelfUploadPart{file: shelfImportFile{relative: name, source: name, file: dst, format: ext, size: n}})
@@ -390,7 +422,7 @@ func (s *Server) uploadShelf(w http.ResponseWriter, r *http.Request) {
 			batch.groups = append(batch.groups, shelfImportGroup{files: []shelfImportFile{part.file}})
 		}
 	}
-	if err = batch.prepareTree(current.depth(parent), limits.Entries); err != nil {
+	if err = batch.prepareTree(current.depth(parent), shelfMaxTreeNodes); err != nil {
 		shelfFail(w, err)
 		return
 	}
