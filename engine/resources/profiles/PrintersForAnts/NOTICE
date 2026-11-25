@@ -1,7 +1,7 @@
-Micron+ profile and build plate assets
+Micron+ profile, build plate, and cover assets
 
 The Printers For Ants Micron project distributes the following files under
-the GNU General Public License, version 3 (GPL-3.0). The assets are included
+the GNU General Public License, version 3 (GPL-3.0). The bed assets are included
 unmodified from revision d350f19f60a2d90a6e6866bccc906fff638677c2.
 A copy of the license is included in COPYING.
 
@@ -11,6 +11,16 @@ https://github.com/PrintersForAnts/Micron/tree/d350f19f60a2d90a6e6866bccc906fff6
   Firmware/Slicer/BedModel/micron-180-grid.png
 
 https://github.com/PrintersForAnts/Micron/blob/d350f19f60a2d90a6e6866bccc906fff638677c2/LICENSE
+
+Micron+_cover.png adapts the official Printers For Ants Micron+ render
+Green-Micron-plus-Render.png under GPL-3.0. The crop starts at pixel (550, 85)
+and is 1380 by 1235 pixels. Lanczos resampling scales it to 240 by 215 pixels
+with its aspect ratio preserved to the nearest pixel. Transparent padding
+adds 12 pixels above and 13 below for a 240 by 240 RGBA PNG. The cover retains
+the render's sRGB color profile.
+
+https://github.com/PrintersForAnts/Micron/blob/e4f8ef33948d97cb7fc72140bb2ed5cc685abc1a/Images/Green-Micron-plus-Render.png
+https://github.com/PrintersForAnts/Micron/blob/e4f8ef33948d97cb7fc72140bb2ed5cc685abc1a/LICENSE
 
 The machine profile adapts the community Micron+ 0.4 mm OrcaSlicer preset
 from kwankiu/Micron, branch slicer_profile, revision
