@@ -95,7 +95,7 @@ func (m *mcpService) uploadShelfModel(ctx context.Context, call *mcp.CallToolReq
 	decode := func() io.Reader {
 		return mcpContextReader{ctx, base64.NewDecoder(base64.StdEncoding, strings.NewReader(in.Data))}
 	}
-	limit := shelfUploadLimits(m.server.cfg).RequestBytes
+	limit := shelfUploadLimits(m.server.cfg).FileBytes
 	size, err := io.Copy(io.Discard, io.LimitReader(decode(), limit+1))
 	if err != nil || size == 0 {
 		return nil, errors.New("data must contain a file encoded in standard base64")

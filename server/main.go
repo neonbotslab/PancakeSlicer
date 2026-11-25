@@ -36,6 +36,7 @@ type Config struct {
 	JobTimeout            time.Duration
 	JobTTL                time.Duration
 	MaxUploadSize         int64
+	ShelfMaxUploadSize    int64
 	UploadMinRate         int64
 	SubmitRate            float64
 	SubmitBurst           int
@@ -103,6 +104,7 @@ func parseConfig() Config {
 	flag.DurationVar(&c.JobTimeout, "job-timeout", envDuration("ORCA_WEB_JOB_TIMEOUT", 15*time.Minute), "wall-clock limit of one slice; 0 disables (ORCA_WEB_JOB_TIMEOUT)")
 	flag.DurationVar(&c.JobTTL, "job-ttl", envDuration("ORCA_WEB_JOB_TTL", 2*time.Hour), "finished job retention; 0 disables automatic expiry (ORCA_WEB_JOB_TTL)")
 	flag.Int64Var(&c.MaxUploadSize, "max-upload", int64(envInt("ORCA_WEB_MAX_UPLOAD_MB", 512))<<20, "largest accepted upload in bytes (ORCA_WEB_MAX_UPLOAD_MB in MB)")
+	flag.Int64Var(&c.ShelfMaxUploadSize, "shelf-max-upload", int64(envInt("ORCA_WEB_SHELF_MAX_UPLOAD_MB", shelfUploadMaxBytes>>20))<<20, "largest accepted Shelf upload in bytes (ORCA_WEB_SHELF_MAX_UPLOAD_MB in MiB)")
 	flag.Int64Var(&c.UploadMinRate, "upload-min-rate", int64(envInt("ORCA_WEB_UPLOAD_MIN_RATE", 256<<10)), "minimum multipart bytes per second after ten-second grace (ORCA_WEB_UPLOAD_MIN_RATE)")
 	rate, _ := strconv.ParseFloat(env("ORCA_WEB_SUBMIT_RATE", "0"), 64)
 	flag.Float64Var(&c.SubmitRate, "submit-rate", rate, "job submission tokens per second per IP; 0 disables (ORCA_WEB_SUBMIT_RATE)")
@@ -152,6 +154,9 @@ func parseConfig() Config {
 	}
 	if c.JobTimeout < 0 || c.JobTTL < 0 || c.MaxUploadSize <= 0 || c.UploadMinRate <= 0 {
 		log.Fatal("max-upload and upload-min-rate must be positive; job-timeout and job-ttl must be nonnegative")
+	}
+	if c.ShelfMaxUploadSize <= 0 {
+		log.Fatal("shelf-max-upload must be positive")
 	}
 	if c.SourceArchive != "" {
 		if abs, err := filepath.Abs(c.SourceArchive); err == nil {

@@ -111,8 +111,8 @@ export function ShelfUpload({ tile }: { tile: UploadTile }) {
       {state.kind === 'preview' && <div className={`shelf-tile-status${zip ? ' shelf-tile-status-archive' : ''}`} role="status">
         <span className="shelf-shimmer" />Making preview
       </div>}
-      {state.kind === 'failed' && <div className="shelf-tile-status" title={state.detail}>
-        <span>Couldn’t read this file</span>
+      {state.kind === 'failed' && <div className="shelf-tile-status">
+        <span role="alert">{state.detail || 'Couldn’t read this file'}</span>
         <button type="button" className="shelf-link" onClick={() => clearUpload(tile.key)} aria-label={`Remove ${name}`}>Remove</button>
       </div>}
     </div>

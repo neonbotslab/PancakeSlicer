@@ -22,13 +22,16 @@ import (
 )
 
 const (
-	shelfMeshMaxBytes      = 128 << 20
-	shelfMeshMaxTriangles  = 1_000_000
-	shelfMeshMaxVertices   = 3 * shelfMeshMaxTriangles
-	shelfMeshMaxCoordinate = 1_000_000
-	shelf3MFMaxXML         = 96 << 20
-	shelf3MFMaxParts       = 2048
-	shelf3MFMaxDepth       = 32
+	shelfMeshMaxBytes              = shelfUploadMaxBytes
+	shelfMeshMaxTriangles          = 1_000_000
+	shelfMeshMaxVertices           = 3 * shelfMeshMaxTriangles
+	shelfMeshMaxCoordinate         = 1_000_000
+	shelf3MFMaxXML                 = 96 << 20
+	shelf3MFMaxParts               = 2048
+	shelf3MFMaxDepth               = 32
+	shelf3MFMaxPartCompressedBytes = 128 << 20
+	shelfSTEPMaxOutputBytes        = 128 << 20
+	shelfZIPDirectoryMaxBytes      = 4 << 20
 )
 
 type shelfTriangle [3]meshPoint
@@ -501,7 +504,7 @@ func shelfZIPDirectory(file *os.File, size int64, maxEntries int) error {
 			}
 			count, length, offset, position = locator.count, locator.length, locator.offset, locator.position
 		}
-		if count > uint64(maxEntries) || length > 4<<20 {
+		if count > uint64(maxEntries) || length > shelfZIPDirectoryMaxBytes {
 			return errShelfMeshLimit
 		}
 		if length > position || offset != position-length {
@@ -670,7 +673,7 @@ func (p *shelf3MFPackage) readXML(part string, maxBytes int64, read func(*xml.De
 	}
 	limit := min(maxBytes, p.remaining)
 	if entry.UncompressedSize64 > uint64(limit) ||
-		entry.CompressedSize64 > shelfMeshMaxBytes ||
+		entry.CompressedSize64 > shelf3MFMaxPartCompressedBytes ||
 		entry.UncompressedSize64 > 200*entry.CompressedSize64 {
 		return errShelfMeshLimit
 	}
@@ -1050,7 +1053,7 @@ func readShelfSTEP(ctx context.Context, cfg Config, input *os.File, format strin
 			return readShelfSTEPOutput(ctx, out)
 		case <-ticker.C:
 			info, err := os.Lstat(out)
-			if err == nil && (!info.Mode().IsRegular() || info.Size() > shelfMeshMaxBytes) {
+			if err == nil && (!info.Mode().IsRegular() || info.Size() > shelfSTEPMaxOutputBytes) {
 				cancel()
 				<-wait
 				return nil, errShelfMeshLimit
@@ -1064,7 +1067,7 @@ func readShelfSTEPOutput(ctx context.Context, output string) ([]shelfTriangle, e
 	if err != nil {
 		return nil, errors.New("STEP conversion produced no 3MF geometry")
 	}
-	if !info.Mode().IsRegular() || info.Size() > shelfMeshMaxBytes {
+	if !info.Mode().IsRegular() || info.Size() > shelfSTEPMaxOutputBytes {
 		return nil, errShelfMeshLimit
 	}
 	f, err := os.Open(output)
