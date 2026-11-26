@@ -10,6 +10,15 @@ on:
   workflow_dispatch:
 
 jobs:
+  privacy:
+    name: Public history privacy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 .forgejo/scripts/scan-public-history.py HEAD
+
   web:
     name: Web (tsc + build)
     runs-on: ubuntu-latest

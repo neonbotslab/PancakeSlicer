@@ -1,0 +1,430 @@
+[
+  {
+    "blob": "03fe40936411c36b462116a2036ba1471e1e7420",
+    "reason": "false-positive section anchor"
+  },
+  {
+    "blob": "05d5d4ac703bc9b1dcf282acaaa72077b4e4c66b",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "0ae74783f700d0ed8b8db813b00a17612d6dbe9e",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "0b28b9287b43f23590a67698e114916dad1a7996",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "0bae9c0bff563a682a3753bb4eba2bc2f5a053bb",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "0e2d82e20925eb7bc1db6db74fc5ee61e5fa8995",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "0fe57f0b0636e94bad342878164498a4e5fc1432",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "1545d46cc1fabc51a4b877b87d7c526ef47b9c55",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "16e8c96e46e593bb251df72d86dbf9c99804c3c5",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "1a0d950914a05d255b5e466cefaf12e6b2e022f8",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "1ae2d9543ac00108f760870b0d2045833b03c881",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "1b92465432ece331acdffa3300c883e3b16772b8",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "1e24b85f67f23f42e5ae60d04c9a997b642e6f36",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "20f82b5fa9ff44d396465a400522eac6d320dcb6",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "2102a9e857104993b43cf640e9c4c4b42d6966d5",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "215838c1fcf9a9907a6fcdd809b4ee504ac3aadd",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "24c5ab0c8979531ca5db6bfb3d9c0bd1a4a02bb0",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "27ffffb74c8d967a22f1286c70d73e88d5466ba9",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "2f528e297c3da7e5786e3474a9346e5e72f60467",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "2f63efbec57ecf4cbc8b6be2fa6286ea703dfc0b",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "3070b90d082969cb4d114a57bd6ae82f96d34d56",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "332102012056022c6d664bbc2804b2e657bf1ecf",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "33f980c1ec43bfcf82f441d9c9f0e695a1c07f18",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "35d3c95fb89ff526c188ed81189d814ec5d61e09",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "38844934e2ea3839457dc66b27c9fc0935943423",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "3a3fe5d234ad2d8f98d00e959d586baf4bae6424",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "3b35d9b9ad8e6c1134312b03af6600d7bb88452f",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "3c4e6f6ef4124e45dc03102bb5757430fc3a3189",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "3daf7e4c02e809deca00bdcfef5b5b2866475d01",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "3e84c7a9eee7b21de297c94aa3a748ac5a95d6f4",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "3f6595738534eecbcd00ce33203c3eb18a632b9f",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "4066c6e91779bdfbd5be62207031aba7de54c2aa",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "42fda686097522d227abeef61ce793a69a4fe087",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "438f23aaed4342d12f06005b239362a33e9198f5",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "450c67f546102d04f720881dc01ecb289eb245dc",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "489af75516d169d6abf3885dec121e52a491aa41",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "4bc58474083a87858462b711d20c06075b1088a6",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "4ea9c8bf6540ce69cae09e645baadc0cef9bab1f",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "51743dbca25fece8da10b3290c3854bffa494038",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "534ea8da9965030394fad5d21eb025831aa5602f",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "53caa7025de6643b648847ae76c91672eeb4125c",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "54ab6988aaea4cfa056ecb1add918912ed23196c",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "56e4010c86a8acf0bf2b8be33e96aa091f0e6860",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "58bc24680cd245eef1c52b0a688633afdf763764",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "59abb503f0a57fb34d3a59bdd8b4a0c19815c617",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "5bf47ca9b0d89932332270bdda09248a2d9ad86e",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "5e5323f6790c9d9f7f72e396031b675c81539eb4",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "5ec358f883fc42a089aaa8300664d79ccd961c6f",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "5f3d3b2a409d6ee3787f8dd1f4d80891c1f34512",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "60cbb522c541d77ac0905f52ac914cd6a439564d",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "613089a72c365c08b51a68aa600304afc617ce41",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "626b3d23ab2baf2d13e938ffd79dc616d9c6e065",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "65a5b685a5203faf9f56230ccf1d7b2b3be019a9",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "65c65fa9e9d9fafee2d15ece00a5131c19d27dc4",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "699e67f6a3bb88a637c46a479c1c30cd41278a1e",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "6c41d5bde7e9dcb178e75aa16a687aa236262f0a",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "7000359300af8b8dd66d5212e2868e8cedb79e17",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "707df9009960bca151a05553332a4a9ec792899b",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "73672b01944863b336049239a136ad1a78c7f5de",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "74126664e2a29286c73ab7f329e2cfcedd63e0f0",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "75eae5a20928d29a83e48db76faf3647470ed616",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "75ed1f5a4219487707ebb22866874aadfe382ea9",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "7787ad834a43fc664122155b10f416fdc76ce0b4",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "77c44ae3de60d119b23e57af1f47e285ad778d67",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "80431b80ae7a21d3b0de0e8cc0baed57e7b47995",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "885186fe76a9b1c58383027dcbf0782bc2a8536b",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "8852058d54d16878e9fbb1a52be667170c07cae4",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "8bc845ee6af31604da94324168c2dced2d1c08fc",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "91a2619c9716f208ff6198a3fc4875f3669a0f8b",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "944e773cc367a6ab7b925b0123e3ec75958ad415",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "95d55f0a56c90af0bb15f8f378c215570d70ba0c",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "9c4b1cac73d0d83de9d3a9b7d6a0f10a80e8e7ab",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "9ca9bcd84f60848e87325345118e3dda7e931b69",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "9de667e45df91443ad390b5aa75a6d218067c927",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "a0dc0d068173369e49254fd8e7c5d75134dbc4ec",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "a120b5f6292f4f74e5e3069b539633937bc762c9",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "a2006840fd21318aedae834d59c4d14bb5fcb58e",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "a66335e7078b6aaed6359baf10eaf8a054b2af06",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "aade5591f88cdd0cc2e43ecb3988f178b2c44232",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "b16c9969ccc58933ce4e6563c33b72309034a2b6",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "b3188dbbc495cff77988c41f17b88ca3dcd9a0a1",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "b34e93787fe822feab5a8e208426674fade91f5a",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "b95acaf3822a9f66b1eddc328a05f22a2ad27a39",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "c052fb721f8523ada4d0181bd2b25004d28e1d0c",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "c2ec22734929ee92796e3339f922029d6546cae7",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "c695d8bc728752adf3f8c94b249082abf99b7fdb",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "c7ddf480a1b0068ad8e6197fe65738caaaae42d9",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "cb6a5abe3d8433f73ea6862e504356ee948a3c7f",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "cf382e9015abe6fc377a5a87305c6d8e75310388",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "d1b2d2c1c5558a70d0ba262e302a38ac903d9ee2",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "d6eef33204449d0acd64b9d2abc96dd2c301cd2b",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "dc10283e28a881a8e4dd36b80c71614aeb689466",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "dd3017748da468d9b297a54be0b608abd657af63",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "dd48ae5911929209da5820c4b43d2c8b71cadcab",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "e138bb56231974d948b0e23e902c12a30d0240a2",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "eb88407c34bf4901ca03a72a0feb826ea524689a",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "ece1ffc74b2c32665226cbf7512efc7309831888",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "ef22ab8ec17b952f588ec560660f33d5a13685cd",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "ef4c79dbde98be4155b97afff0c8a1d64778d5e0",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "f08e6a1b9873a4bd44e57c0a10348f567385816c",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "f168beb45865d34f3e26c06be9aa27f039aa143a",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "f3d7d90d76606e6c7a14931e5741b1c9e687e5f8",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "f44ac324cde932640208d8041c03d132c022c804",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "f686cb2370174c05694d87d57aa591a9bb3c98e5",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "fb5a62bd98215cc981e1111eac6e149ad8fa55f6",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "fb60be0551b2e50f416efa6214b83ebc6fa2d02e",
+    "reason": "upstream-provenance"
+  },
+  {
+    "blob": "ff02afcd428f483fc726b8a1d062f474cf4d3514",
+    "reason": "upstream-provenance"
+  }
+]
