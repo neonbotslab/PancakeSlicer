@@ -486,7 +486,7 @@ func (s *Server) shelfSource(id string, expected *uint64) (shelfModel, string, f
 	}
 	cleanup := func() { os.RemoveAll(dir) }
 	dst := filepath.Join(dir, "model"+model.Format)
-	if err = s.blobs.link(model.SHA256, dst); err != nil {
+	if err = s.blobs.stage(model.SHA256, dst, false); err != nil {
 		cleanup()
 		return shelfModel{}, "", nil, err
 	}
